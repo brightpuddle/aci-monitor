@@ -20,7 +20,7 @@ import (
 	"golang.org/x/crypto/ssh/terminal"
 )
 
-const version = "0.1"
+var Rev string
 
 type Fabric struct {
 	options   Args
@@ -237,6 +237,10 @@ func getArgs() Args {
 
 func (Args) Description() string {
 	return "Monitor ACI health status."
+}
+
+func (Args) Version() string {
+	return fmt.Sprintf("Revision %s", Rev)
 }
 
 func makePrettyPrinter(c string) func(string, interface{}) {
