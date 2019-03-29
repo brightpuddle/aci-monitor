@@ -1,0 +1,40 @@
+language: go
+sudo: false
+matrix:
+  include:
+    - go: 1.x
+      env: LATEST=true
+    - go: 1.7.x
+    - go: 1.8.x
+    - go: 1.9.x
+    - go: 1.10.x
+    - go: 1.11.x
+    - go: tip
+  allow_failures:
+    - go: tip
+
+before_install:
+  - go get github.com/mitchellh/gox
+
+install:
+  - # skip
+
+script:
+  - go get -t -v ./...
+  - diff -u <(echo -n) <(gofmt -d .)
+  - go test -v -race ./...
+  - if [ "${LATEST}" = "true" ]; then gox -os="linux darwin windows" -arch="amd64" -output="aci-monitor.{.OS}" -ldflags "-X main.Rev=`git rev-parse --short HEAD`" -verbose ./...; fi
+
+deploy:
+  provider: releases
+  skip_cleanup: true
+  api_key:
+    secure: "cZax7y7qzo4F67xkg6TVA5qkJpv6yN6QRZnDtw3skfB2l3rpdHSaqnHnGsRCVroD6rRynu+w2ZS2wEwyGKS9tw8Z284bTBPeGql64MvztXv9iRadqdPQOw6VfFpjssFO7NZH6FKJdPro4LJOqfnjRLSPRnB80woQPvr6Aeg44RHNhjRUwZYkMrM9GCI9vkb5uUF7eMV9SC2RioE+2/HD4SbGz+q02V9Z5u3ZTKUNDR6XSglXsJydzk7vgjoVue0RjD5Ep7tJ2iK/ndwZ1ksNZ72SNJSr6jc7WraGwVpQhP+59+ZCdqm9EjUG2ZljpeURGJPKmsgnTpc/n2MAHpLBo/bO+8S5tFKc2ykDSadzH+DO2JUCE3CKkUWb6rwJSygw77IfPsLdYwWU+dXfkcknIh8y973Ztm6ZAAseIRstQRL1zk7clSUmavNB5sOOTlQx6PUo9NkTTzrM7nHoWjtkDKZbrrZNLl5XzH5O1/ZJtVlrfkFA5Ct9kNJjjBV5OrRnpXegxOkgYaaue/O47aCRH3DqsgXsBIAEWSrun5M3TyJhEEa7aIIJhWLCBkw6j0D9fpt3QR6MG4D9zBCdi/qLXvtZBuuWJM4hyNDaVTcOXOcCa5FFYwPTthx+lDLryBySpXB13hkigWNZ5MTmcXMDWM7nBINIMvlkgHdbd9zAu+k="
+  file:
+  - aci-monitor.windows.exe
+  - aci-monitor.darwin
+  - aci-monitor.linux
+  on:
+    repo: brightpuddle/aci-monitor
+    tags: true
+    condition: $LATEST = true
