@@ -240,6 +240,9 @@ func (Args) Description() string {
 }
 
 func (Args) Version() string {
+	if Rev == "" {
+		return "Local build"
+	}
 	return fmt.Sprintf("Revision %s", Rev)
 }
 
@@ -590,8 +593,8 @@ func init() {
 }
 
 func main() {
-	pp.info("Running", "Hit Ctrl-C to stop.")
 	f := makeFabric()
+	pp.info("Running", "Hit Ctrl-C to stop.")
 	f.loginLoop()
 	snapshot := f.readSnapshot()
 	for {
