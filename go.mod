@@ -4,7 +4,7 @@ go 1.12
 
 require (
 	github.com/alexflint/go-arg v1.0.0
-	github.com/konsorten/go-windows-terminal-sequences v1.0.2 // indirect
+	github.com/konsorten/go-windows-terminal-sequences v1.0.2
 	github.com/mattn/go-colorable v0.1.1
 	github.com/mattn/go-isatty v0.0.7 // indirect
 	github.com/pkg/errors v0.8.1

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/alexflint/go-arg"
+	_ "github.com/konsorten/go-windows-terminal-sequences"
 	"github.com/mattn/go-colorable"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
