@@ -36,6 +36,9 @@ Display additional logging info to the terminal, e.g. each HTTP request, etc.
 `-s --snapshot`
 Filename for the snapshot. The default is `snapshot.json`. As the name implies, this file is in JSON, and pretty printed for human-readibility. It contains a list of active devices and faults on the network at the point when created. The recommendation is to create a new snapshot surrounding a change or upgrade to ensure post-change status hasn't introduced any additional faults.
 
+`--json`
+Output all logging data in JSON format for data analysis tools, e.g. Splunk.
+
 `--upgrade`
 Monitor upgrade status of APICs and switches.
 
