@@ -1,5 +1,7 @@
 # ACI status monitor tool
 
+[![Build Status](https://travis-ci.org/brightpuddle/aci-monitor.svg?branch=master)](https://travis-ci.org/brightpuddle/aci-monitor)
+
 Precompiled binaries are provided for all major platforms.
 
 https://github.com/brightpuddle/aci-monitor/releases
@@ -38,9 +40,9 @@ Filename for the snapshot. The default is `snapshot.json`. As the name implies, 
 Monitor upgrade status of APICs and switches.
 
 ## Future
-* Tests
-* Option to timestamp and rotate log files
-* Check for variance in non-fault metrics, e.g. delta change in routes, CAM table, etc
+- [ ] Tests
+- [ ] Option to timestamp and rotate log files
+- [ ] Check for variance in non-fault metrics, e.g. delta change in routes, CAM table, etc
 
 
 Pull requests and/or feedback welcome.
