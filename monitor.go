@@ -5,7 +5,6 @@ import (
 	"crypto/tls"
 	"fmt"
 	"io/ioutil"
-	"log"
 	"net/http"
 	"net/http/cookiejar"
 	"os"
@@ -14,12 +13,16 @@ import (
 	"time"
 
 	"github.com/alexflint/go-arg"
-	"github.com/mgutz/ansi"
+	"github.com/mattn/go-colorable"
 	"github.com/pkg/errors"
+	"github.com/sirupsen/logrus"
 	"github.com/tidwall/gjson"
 	"golang.org/x/crypto/ssh/terminal"
 )
 
+const Version = "0.1.4"
+
+var log *logrus.Logger
 var Rev string
 
 type Fabric struct {
@@ -38,6 +41,15 @@ func makeFabric() Fabric {
 		Timeout: time.Second * 15,
 		Jar:     cookieJar,
 	}
+	if args.Verbose {
+		log.SetLevel(logrus.DebugLevel)
+	}
+	if args.JSON {
+		log.SetFormatter(&logrus.JSONFormatter{})
+	} else {
+		log.SetFormatter(&logrus.TextFormatter{ForceColors: true})
+		log.SetOutput(colorable.NewColorableStdout())
+	}
 	return Fabric{
 		options:   args,
 		client:    &httpClient,
@@ -47,19 +59,20 @@ func makeFabric() Fabric {
 
 type Args struct {
 	IP       string `arg:"-i" help:"fabric IP address"`
-	Username string `arg:"-u"`
+	JSON     bool   `arg:"--json" help:"JSON logger, e.g. for splunk"`
 	Password string `arg:"-p"`
 	Snapshot string `arg:"-s" help:"Snapshot file"`
 	Upgrade  bool   `arg:"--upgrade" help:"Monitor upgrade status"`
+	Username string `arg:"-u"`
 	Verbose  bool   `arg:"-v"`
 }
 
 type Fault struct {
-	json     gjson.Result
-	dn       string
-	severity string
-	descr    string
 	code     string
+	descr    string
+	dn       string
+	json     gjson.Result
+	severity string
 }
 
 func makeFault(json gjson.Result) Fault {
@@ -168,9 +181,14 @@ func (f Fabric) refresh() error {
 
 func (f Fabric) get(fragment string) (gjson.Result, error) {
 	url := f.url(fragment)
-	if f.options.Verbose {
-		pp.info("GET", fragment)
-	}
+	log.WithFields(logrus.Fields{
+		"type": "GET",
+		"uri":  fragment,
+	})
+	log.WithFields(logrus.Fields{
+		"type": "GET",
+		"uri":  fragment,
+	}).Debug()
 	res, err := f.client.Get(url)
 	if err != nil {
 		return gjson.Result{}, err
@@ -188,9 +206,10 @@ func (f Fabric) login() error {
 	url := f.url(fragment)
 	data := fmt.Sprintf(`{"aaaUser":{"attributes":{"name":"%s","pwd":"%s"}}}`,
 		f.options.Username, f.options.Password)
-	if f.options.Verbose {
-		pp.info("POST", fragment)
-	}
+	log.WithFields(logrus.Fields{
+		"type":     "POST",
+		"fragment": fragment,
+	}).Debug()
 	res, err := f.client.Post(url, "json", strings.NewReader(data))
 	if err != nil {
 		return err
@@ -207,7 +226,7 @@ func (f Fabric) login() error {
 	if errText != "" {
 		return errors.New("Authentication error")
 	}
-	fmt.Println("Authentication successful.")
+	log.Info("Authentication successful.")
 	return nil
 }
 
@@ -215,7 +234,7 @@ func input(prompt string) string {
 	reader := bufio.NewReader(os.Stdin)
 	fmt.Printf("%s ", prompt)
 	input, _ := reader.ReadString('\n')
-	return strings.Replace(input, "\r\n", "", -1)
+	return strings.Trim(input, "\r\n")
 }
 
 func getArgs() Args {
@@ -241,52 +260,9 @@ func (Args) Description() string {
 
 func (Args) Version() string {
 	if Rev == "" {
-		return "Local build"
+		return fmt.Sprintf("Version %s local build", Version)
 	}
-	return fmt.Sprintf("Revision %s", Rev)
-}
-
-func makePrettyPrinter(c string) func(string, interface{}) {
-	hl := func(s string) string {
-		return ansi.Color(s, c)
-	}
-	logger := log.New(os.Stdout, "", 0)
-	return func(header string, body interface{}) {
-		h := hl(fmt.Sprintf("[%s]", header))
-		switch body.(type) {
-		case string, error:
-			logger.Println(h, body)
-		case gjson.Result:
-			logger.Println(h)
-			logger.Println(body.(gjson.Result).Get("@pretty"))
-
-		case time.Duration:
-			t := body.(time.Duration)
-			timeString := fmt.Sprintf("%dh %dm %ds",
-				int(t.Hours()),
-				int(t.Minutes()),
-				int(t.Seconds()),
-			)
-			logger.Println(h, timeString)
-		case Fault:
-			fault := body.(Fault)
-			logger.Println(h)
-			logger.Println("Severity:", fault.severity)
-			logger.Println("Description:", fault.descr)
-		default:
-			logger.Printf("%s\n%v+", h, body)
-		}
-	}
-}
-
-var pp = struct {
-	info func(string, interface{})
-	warn func(string, interface{})
-	err  func(string, interface{})
-}{
-	makePrettyPrinter(ansi.Green),
-	makePrettyPrinter(ansi.Yellow),
-	makePrettyPrinter(ansi.Red),
+	return fmt.Sprintf("Version %s Revision %s", Version, Rev)
 }
 
 func (f Fabric) getDevices() (res []Device) {
@@ -344,9 +320,7 @@ func (f Fabric) getSwitchStatus(device Device) (Status, error) {
 }
 
 func (f Fabric) getUpgradeStatus(devices []Device) (res []Status, err error) {
-	if !f.options.Verbose {
-		fmt.Printf("Querying devices: ")
-	}
+	log.Info("Querying devices for upgrade state. Please wait...")
 	for _, device := range devices {
 		switch device.role {
 		case "controller":
@@ -362,25 +336,27 @@ func (f Fabric) getUpgradeStatus(devices []Device) (res []Status, err error) {
 			}
 			res = append(res, status)
 		case "remote-leaf-wan":
-			pp.warn("Unsupported Virtual Leaf", device.name)
+			log.WithFields(logrus.Fields{
+				"message": "Unsupported remote leaf",
+				"device":  device.name,
+			}).Warn()
 		case "virtual":
-			pp.warn("Unsupported Virtual Leaf", device.name)
+			log.WithFields(logrus.Fields{
+				"message": "Unsupported virtual leaf",
+				"device":  device.name,
+			}).Warn()
 		default:
-			pp.warn("Unrecognized Device Type", fmt.Sprintf("Device: %s Type: %s",
-				device.name, device.json.Get("type").Str))
+			log.WithFields(logrus.Fields{
+				"message": "Unrecognized device type",
+				"device":  device.name,
+			}).Warn()
 		}
-		if !f.options.Verbose {
-			fmt.Printf(".")
-		}
-	}
-	if !f.options.Verbose {
-		fmt.Printf("\n")
 	}
 	return res, nil
 }
 
 func createNewSnapshot(f Fabric, fn string) Snapshot {
-	pp.info("Snapshot", fmt.Sprintf("Creating new snapshot %s...", fn))
+	log.Info(fmt.Sprintf("Creating new snapshot %s...", fn))
 	var faultJSON string
 	faults := f.getFaults()
 	for _, fault := range faults {
@@ -403,7 +379,7 @@ func createNewSnapshot(f Fabric, fn string) Snapshot {
 func (f Fabric) readSnapshot() Snapshot {
 	fn := f.options.Snapshot
 	if _, err := os.Stat(fn); err == nil {
-		pp.info("Snapshot", fmt.Sprintf(`Loading snapshot "%s"...`, fn))
+		log.Info(fmt.Sprintf(`Loading snapshot "%s"...`, fn))
 		data, err := ioutil.ReadFile(fn)
 		if err != nil {
 			panic(err)
@@ -440,68 +416,73 @@ func (f Fabric) parseUpgradeState(statuses []Status) int {
 		}
 	}
 	if len(sorted.scheduled) > 0 {
-		pp.info("Status", fmt.Sprintf("%d device(s) scheduled for upgrade.",
+		log.Info(fmt.Sprintf("%d device(s) scheduled for upgrade.",
 			len(sorted.scheduled)))
-		fmt.Println("Note that these will not start upgrading without a trigger.")
+		log.Info("Note that these will not start upgrading without a trigger.")
 		if !f.options.Verbose {
-			fmt.Println(`Use "verbose" option to view details of scheduled devices.`)
-		} else {
-			for _, status := range sorted.scheduled {
-				ip := status.device.address
-				name := status.device.name
-				pp.info(fmt.Sprintf("%s %s", name, ip), "")
-				fmt.Printf("Firmware group: %s\n", status.job.fwGrp)
-				fmt.Printf("Current version: %s\n", status.running.version)
-				fmt.Printf("Desired version: %s\n", status.job.desiredVersion)
-				fmt.Printf("Maintenance group: %s\n", status.job.maintGrp)
-			}
+			log.Info(`Use "verbose" option to view details of scheduled devices.`)
+		}
+		for _, status := range sorted.scheduled {
+			log.WithFields(logrus.Fields{
+				"name":              status.device.name,
+				"ip":                status.device.address,
+				"status":            status.job.upgradeStatus,
+				"firmware group":    status.job.fwGrp,
+				"current version":   status.running.version,
+				"desired version":   status.job.desiredVersion,
+				"maintenance group": status.job.maintGrp,
+			}).Debug()
 		}
 	}
 	if len(sorted.queued) > 0 {
-		pp.warn("Status", fmt.Sprintf("%d device(s) queued for upgrade.",
+		log.Warn(fmt.Sprintf("%d device(s) queued for upgrade.",
 			len(sorted.queued)))
-		fmt.Println("These devices are queued to upgrade automatically...")
+		log.Warn("The following devices are queued to upgrade automatically...")
 		for _, status := range sorted.queued {
-			ip := status.device.address
-			name := status.device.name
-			pp.warn(fmt.Sprintf("%s %s", name, ip), "")
-			fmt.Printf("Firmware group: %s\n", status.job.fwGrp)
-			fmt.Printf("Current version: %s\n", status.running.version)
-			fmt.Printf("Desired version: %s\n", status.job.desiredVersion)
-			fmt.Printf("Maintenance group: %s\n", status.job.maintGrp)
+			log.WithFields(logrus.Fields{
+				"name":              status.device.name,
+				"ip":                status.device.address,
+				"status":            status.job.upgradeStatus,
+				"firmware group":    status.job.fwGrp,
+				"current version":   status.running.version,
+				"desired version":   status.job.desiredVersion,
+				"maintenance group": status.job.maintGrp,
+			}).Warn()
 		}
 	}
 
 	if len(sorted.unavailable) > 0 {
-		pp.warn("Status", fmt.Sprintf("%d device(s) are not providing a status.",
+		log.Warn(fmt.Sprintf("%d device(s) are not providing a status.",
 			len(sorted.unavailable)))
-		fmt.Println("Devices may be rebooting due to upgrade activity.")
+		log.Info("Devices may be rebooting due to upgrade activity.")
 		for _, status := range sorted.unavailable {
-			ip := status.device.address
-			name := status.device.name
-			pp.warn(fmt.Sprintf("%s %s", name, ip), "Unavailable")
+			log.WithFields(logrus.Fields{
+				"name":   status.device.name,
+				"ip":     status.device.address,
+				"status": "unknown",
+			}).Warn()
 
 		}
 	}
 
 	if len(sorted.upgrading) > 0 {
-		pp.warn("Status", fmt.Sprintf("%d device(s) upgrading.",
-			len(sorted.upgrading)))
+		log.Warn(fmt.Sprintf("%d device(s) upgrading.", len(sorted.upgrading)))
 		var percents []int
 		for _, status := range sorted.upgrading {
-			ip := status.device.address
-			name := status.device.name
 			percent := status.job.instlProgPct
 			if percent > 0.0 {
 				percents = append(percents, int(percent))
 			}
-			pp.warn(fmt.Sprintf("%s %s", name, ip), "")
-			fmt.Printf("Status: %s\n", status.job.upgradeStatusStr)
-			fmt.Printf("Percent: %d\n", status.job.instlProgPct)
-			fmt.Printf("Firmware group: %s\n", status.job.fwGrp)
-			fmt.Printf("Current version: %s\n", status.running.version)
-			fmt.Printf("Desired version: %s\n", status.job.desiredVersion)
-			fmt.Printf("Maintenance group: %s\n", status.job.maintGrp)
+			log.WithFields(logrus.Fields{
+				"name":              status.device.name,
+				"ip":                status.device.address,
+				"status":            status.job.upgradeStatus,
+				"percent":           status.job.instlProgPct,
+				"firmware group":    status.job.fwGrp,
+				"current version":   status.running.version,
+				"desired version":   status.job.desiredVersion,
+				"maintenance group": status.job.maintGrp,
+			}).Warn()
 		}
 		if len(percents) > 0 {
 			var total int
@@ -509,14 +490,14 @@ func (f Fabric) parseUpgradeState(statuses []Status) int {
 				total += percent
 			}
 			avg := int(float64(total) / float64(len(percents)))
-			pp.info("Status", fmt.Sprintf("Average total percent: %d%%", avg))
+			log.Info(fmt.Sprintf("Average total percent: %d%%", avg))
 		}
 	}
 
 	if len(sorted.queued) == 0 &&
 		len(sorted.upgrading) == 0 &&
 		len(sorted.unavailable) == 0 {
-		pp.info("Status", "No devices currently undergoing upgrade.")
+		log.Info("No devices currently undergoing upgrade.")
 		return stable
 	}
 	return upgrading
@@ -536,13 +517,17 @@ func (f Fabric) checkFaults(faults []Fault) {
 		}
 	}
 	if len(newFaults) > 0 {
-		pp.warn("Fault Status",
-			fmt.Sprintf("%d new fault(s) since previous snapshot.", len(newFaults)))
+		log.Warn(fmt.Sprintf("%d new fault(s) since previous snapshot.",
+			len(newFaults)))
 		for _, fault := range newFaults {
-			pp.warn(fmt.Sprintf("New Fault %s", fault.code), fault)
+			log.WithFields(logrus.Fields{
+				"Code":        fault.code,
+				"Severity":    fault.severity,
+				"Description": fault.descr,
+			}).Warn()
 		}
 	} else {
-		pp.info("Fault Status", "No new faults since snapshot.")
+		log.Info("No new faults since snapshot.")
 	}
 }
 
@@ -566,8 +551,7 @@ func (f Fabric) requestLoop(snapshot Snapshot) error {
 		} else {
 			f.checkFaults(snapshot.faults)
 		}
-		pp.info("Timer", time.Since(f.startTime))
-		pp.info("Timer", "Sleeping for 10 seconds...")
+		log.Info("Sleeping for 10 seconds...")
 		time.Sleep(10 * time.Second)
 	}
 }
@@ -575,10 +559,10 @@ func (f Fabric) requestLoop(snapshot Snapshot) error {
 func (f Fabric) loginLoop() (ok bool) {
 	err := f.login()
 	for err != nil {
-		pp.err("Error", err)
-		fmt.Println("Note, that login failures are expected on device reload.")
-		fmt.Println("If this is the initial login, hit Ctrl-C and verify login details.")
-		pp.info("Timer", "Waiting 60 seconds before trying again...")
+		log.Error(err)
+		log.Info("Note, that login failures are expected on device reload.")
+		log.Info("If this is the initial login, hit Ctrl-C and verify login details.")
+		log.Info("Waiting 60 seconds before trying again...")
 		time.Sleep(60 * time.Second)
 		err = f.login()
 	}
@@ -586,20 +570,22 @@ func (f Fabric) loginLoop() (ok bool) {
 }
 
 func init() {
-	// Disable invalid cert check
 	http.DefaultTransport.(*http.Transport).TLSClientConfig = &tls.Config{
 		InsecureSkipVerify: true,
 	}
+	logrus.SetFormatter(&logrus.TextFormatter{ForceColors: true})
+	logrus.SetOutput(colorable.NewColorableStdout())
+	log = logrus.New()
 }
 
 func main() {
 	f := makeFabric()
-	pp.info("Running", "Hit Ctrl-C to stop.")
+	log.Info("Hit Ctrl-C to stop")
 	f.loginLoop()
 	snapshot := f.readSnapshot()
 	for {
 		if err := f.requestLoop(snapshot); err != nil {
-			pp.err("Error", err)
+			log.Error(err)
 		}
 		f.loginLoop()
 	}
