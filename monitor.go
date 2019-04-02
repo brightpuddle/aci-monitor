@@ -183,13 +183,8 @@ func (f Fabric) refresh() error {
 func (f Fabric) get(fragment string) (gjson.Result, error) {
 	url := f.url(fragment)
 	log.WithFields(logrus.Fields{
-		"type": "GET",
-		"uri":  fragment,
-	})
-	log.WithFields(logrus.Fields{
-		"type": "GET",
-		"uri":  fragment,
-	}).Debug()
+		"uri": fragment,
+	}).Debug("http GET")
 	res, err := f.client.Get(url)
 	if err != nil {
 		return gjson.Result{}, err
@@ -208,9 +203,8 @@ func (f Fabric) login() error {
 	data := fmt.Sprintf(`{"aaaUser":{"attributes":{"name":"%s","pwd":"%s"}}}`,
 		f.options.Username, f.options.Password)
 	log.WithFields(logrus.Fields{
-		"type":     "POST",
 		"fragment": fragment,
-	}).Debug()
+	}).Debug("http POST")
 	res, err := f.client.Post(url, "json", strings.NewReader(data))
 	if err != nil {
 		return err
@@ -340,17 +334,17 @@ func (f Fabric) getUpgradeStatus(devices []Device) (res []Status, err error) {
 			log.WithFields(logrus.Fields{
 				"message": "Unsupported remote leaf",
 				"device":  device.name,
-			}).Warn()
+			}).Warn("Unsupported Device")
 		case "virtual":
 			log.WithFields(logrus.Fields{
 				"message": "Unsupported virtual leaf",
 				"device":  device.name,
-			}).Warn()
+			}).Warn("Unsupported Device")
 		default:
 			log.WithFields(logrus.Fields{
 				"message": "Unrecognized device type",
 				"device":  device.name,
-			}).Warn()
+			}).Warn("Unrecognized Device")
 		}
 	}
 	return res, nil
@@ -432,7 +426,7 @@ func (f Fabric) parseUpgradeState(statuses []Status) int {
 				"current version":   status.running.version,
 				"desired version":   status.job.desiredVersion,
 				"maintenance group": status.job.maintGrp,
-			}).Debug()
+			}).Debug("scheduled device")
 		}
 	}
 	if len(sorted.queued) > 0 {
@@ -448,7 +442,7 @@ func (f Fabric) parseUpgradeState(statuses []Status) int {
 				"current version":   status.running.version,
 				"desired version":   status.job.desiredVersion,
 				"maintenance group": status.job.maintGrp,
-			}).Warn()
+			}).Warn("queued device")
 		}
 	}
 
@@ -461,7 +455,7 @@ func (f Fabric) parseUpgradeState(statuses []Status) int {
 				"name":   status.device.name,
 				"ip":     status.device.address,
 				"status": "unknown",
-			}).Warn()
+			}).Warn("unknown upgrade status")
 
 		}
 	}
@@ -483,7 +477,7 @@ func (f Fabric) parseUpgradeState(statuses []Status) int {
 				"current version":   status.running.version,
 				"desired version":   status.job.desiredVersion,
 				"maintenance group": status.job.maintGrp,
-			}).Warn()
+			}).Warn("upgrading device")
 		}
 		if len(percents) > 0 {
 			var total int
@@ -522,10 +516,10 @@ func (f Fabric) checkFaults(faults []Fault) {
 			len(newFaults)))
 		for _, fault := range newFaults {
 			log.WithFields(logrus.Fields{
-				"Code":        fault.code,
-				"Severity":    fault.severity,
-				"Description": fault.descr,
-			}).Warn()
+				"code":        fault.code,
+				"severity":    fault.severity,
+				"description": fault.descr,
+			}).Warn("new fault")
 		}
 	} else {
 		log.Info("No new faults since snapshot.")
