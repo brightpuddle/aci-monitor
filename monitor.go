@@ -182,9 +182,7 @@ func (f Fabric) refresh() error {
 
 func (f Fabric) get(fragment string) (gjson.Result, error) {
 	url := f.url(fragment)
-	log.WithFields(logrus.Fields{
-		"uri": fragment,
-	}).Debug("http GET")
+	log.Debug(fmt.Sprintf("GET request to %s", fragment))
 	res, err := f.client.Get(url)
 	if err != nil {
 		return gjson.Result{}, err
@@ -202,9 +200,7 @@ func (f Fabric) login() error {
 	url := f.url(fragment)
 	data := fmt.Sprintf(`{"aaaUser":{"attributes":{"name":"%s","pwd":"%s"}}}`,
 		f.options.Username, f.options.Password)
-	log.WithFields(logrus.Fields{
-		"fragment": fragment,
-	}).Debug("http POST")
+	log.Debug(fmt.Sprintf("GET request to %s", fragment))
 	res, err := f.client.Post(url, "json", strings.NewReader(data))
 	if err != nil {
 		return err
@@ -426,7 +422,7 @@ func (f Fabric) parseUpgradeState(statuses []Status) int {
 				"current version":   status.running.version,
 				"desired version":   status.job.desiredVersion,
 				"maintenance group": status.job.maintGrp,
-			}).Debug("scheduled device")
+			}).Debug("Device scheduled for upgrade")
 		}
 	}
 	if len(sorted.queued) > 0 {
@@ -442,7 +438,7 @@ func (f Fabric) parseUpgradeState(statuses []Status) int {
 				"current version":   status.running.version,
 				"desired version":   status.job.desiredVersion,
 				"maintenance group": status.job.maintGrp,
-			}).Warn("queued device")
+			}).Warn("Device queued for upgrade")
 		}
 	}
 
@@ -455,7 +451,7 @@ func (f Fabric) parseUpgradeState(statuses []Status) int {
 				"name":   status.device.name,
 				"ip":     status.device.address,
 				"status": "unknown",
-			}).Warn("unknown upgrade status")
+			}).Warn("Device has unknown upgrade status")
 
 		}
 	}
@@ -477,7 +473,7 @@ func (f Fabric) parseUpgradeState(statuses []Status) int {
 				"current version":   status.running.version,
 				"desired version":   status.job.desiredVersion,
 				"maintenance group": status.job.maintGrp,
-			}).Warn("upgrading device")
+			}).Warn("Device upgrading")
 		}
 		if len(percents) > 0 {
 			var total int
@@ -498,8 +494,20 @@ func (f Fabric) parseUpgradeState(statuses []Status) int {
 	return upgrading
 }
 
+type FaultsByCode = map[string][]Fault
+
+func appendFaultByCode(byCode FaultsByCode, fault Fault) FaultsByCode {
+	if faults, ok := byCode[fault.code]; ok {
+		byCode[fault.code] = append(faults, fault)
+	} else {
+		byCode[fault.code] = []Fault{fault}
+	}
+	return byCode
+}
+
 func (f Fabric) checkFaults(faults []Fault) {
-	var newFaults []Fault
+	var faultsByCode = make(FaultsByCode)
+	var newFaultCount int
 	for _, currentFault := range f.getFaults() {
 		newFault := true
 		for _, previousFault := range faults {
@@ -508,18 +516,35 @@ func (f Fabric) checkFaults(faults []Fault) {
 			}
 		}
 		if newFault && currentFault.severity != "cleared" {
-			newFaults = append(newFaults, currentFault)
+			faultsByCode = appendFaultByCode(faultsByCode, currentFault)
+			newFaultCount += 1
 		}
 	}
-	if len(newFaults) > 0 {
+	if newFaultCount > 0 {
 		log.Warn(fmt.Sprintf("%d new fault(s) since previous snapshot.",
-			len(newFaults)))
-		for _, fault := range newFaults {
-			log.WithFields(logrus.Fields{
-				"code":        fault.code,
-				"severity":    fault.severity,
-				"description": fault.descr,
-			}).Warn("new fault")
+			newFaultCount))
+		if !f.options.Verbose {
+			log.Info(`Use "verbose" mode to see full fault list.`)
+		}
+		for _, faults := range faultsByCode {
+			if f.options.Verbose {
+				for i, fault := range faults {
+					log.WithFields(logrus.Fields{
+						"code":        fault.code,
+						"severity":    fault.severity,
+						"description": fault.descr,
+						"count":       fmt.Sprintf("%d of %d", i, len(faults)),
+					}).Warn("new fault")
+				}
+			} else {
+				fault := faults[0]
+				log.WithFields(logrus.Fields{
+					"code":        fault.code,
+					"severity":    fault.severity,
+					"description": fault.descr,
+					"count":       len(faults),
+				}).Warn(fmt.Sprintf("%d new %s fault(s)", len(faults), fault.code))
+			}
 		}
 	} else {
 		log.Info("No new faults since snapshot.")
@@ -575,7 +600,7 @@ func init() {
 
 func main() {
 	f := makeFabric()
-	log.Info("Hit Ctrl-C to stop")
+	log.Info("Running: Hit Ctrl-C to stop")
 	f.loginLoop()
 	snapshot := f.readSnapshot()
 	for {
