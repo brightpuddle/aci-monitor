@@ -46,8 +46,8 @@ Filename for the snapshot. The default is `snapshot.json`. As the name implies, 
 
 ## Future
 - [x] Timestamp snapshot file
+- [x] Remove `--json` option and log json to file by default
 - [ ] Tests
-- [ ] Remove `--json` option and log json to file by default
 - [ ] Check for variance in non-fault metrics, e.g. delta change in routes, CAM table, etc
 
 
