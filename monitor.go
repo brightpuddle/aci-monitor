@@ -280,7 +280,7 @@ func verifyFaults(faults []Fault, currentFaults []Fault) {
 		log.Warn(fmt.Sprintf("%d new fault(s) since previous snapshot.",
 			newFaultCount))
 		if !options.Verbose {
-			log.Info(`Use "verbose" mode to see full fault list.`)
+			log.Info("Use verbose mode to see full fault list.")
 		}
 		for _, faults := range faultsByCode {
 			if options.Verbose {
@@ -595,7 +595,7 @@ func verifyUpgradeState(statuses []Status) int {
 		log.Info(fmt.Sprintf("%d device(s) scheduled for upgrade.",
 			len(sorted.scheduled)))
 		log.Info("Note that these will not start upgrading without a trigger.")
-		log.Info(`"verbose" option will show details of scheduled devices.`)
+		log.Info("verbose option will show details of scheduled devices.")
 		for _, status := range sorted.scheduled {
 			log.WithFields(logrus.Fields{
 				"name":              status.device.name,
