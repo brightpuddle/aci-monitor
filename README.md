@@ -39,12 +39,13 @@ Filename for the snapshot. The default is `snapshot.json`. As the name implies, 
 `--json`
 Output all logging data in JSON format for data analysis tools, e.g. Splunk.
 
-`--upgrade`
-Monitor upgrade status of APICs and switches.
+
+Note that the `--upgrade` option was deprecated. The tool monitors upgrade status by default now. Querying upgrade status only requires three API calls, so there's minimal overhead in hcecking this all the time, even in routine (non-upgrade) maintenance.
 
 ## Future
+- [x] Timestamp snapshot file
 - [ ] Tests
-- [ ] Option to timestamp and rotate log files
+- [ ] Remove `--json` option and log json to file by default
 - [ ] Check for variance in non-fault metrics, e.g. delta change in routes, CAM table, etc
 
 

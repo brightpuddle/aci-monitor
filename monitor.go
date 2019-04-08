@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"crypto/tls"
+	"encoding/json"
 	"fmt"
 	"io/ioutil"
 	"net/http"
@@ -23,185 +24,76 @@ import (
 
 const Version = "0.1.5"
 
-var log *logrus.Logger
 var Rev string
+var log *logrus.Logger
+var options Options
 
-type Fabric struct {
-	options   Args
-	client    *http.Client
-	startTime time.Time
+type JSON = gjson.Result
+
+////////////////////////////////////////////////////////////
+// HTTP Client
+////////////////////////////////////////////////////////////
+
+type Client struct {
+	client *http.Client
 }
 
-func makeFabric() Fabric {
-	args := getArgs()
+type Query struct {
+	uri   string
+	query []string
+}
+
+func NewClient() Client {
+	http.DefaultTransport.(*http.Transport).TLSClientConfig = &tls.Config{
+		InsecureSkipVerify: true,
+	}
 	cookieJar, err := cookiejar.New(nil)
 	if err != nil {
 		panic(err)
 	}
 	httpClient := http.Client{
-		Timeout: time.Second * 15,
+		Timeout: time.Second * 30,
 		Jar:     cookieJar,
 	}
-	if args.Verbose {
-		log.SetLevel(logrus.DebugLevel)
-	}
-	if args.JSON {
-		log.SetFormatter(&logrus.JSONFormatter{})
-	} else {
-		log.SetFormatter(&logrus.TextFormatter{ForceColors: true})
-		log.SetOutput(colorable.NewColorableStdout())
-	}
-	return Fabric{
-		options:   args,
-		client:    &httpClient,
-		startTime: time.Now(),
+	return Client{
+		client: &httpClient,
 	}
 }
 
-type Args struct {
-	IP       string `arg:"-i" help:"fabric IP address"`
-	JSON     bool   `arg:"--json" help:"JSON logger, e.g. for splunk"`
-	Password string `arg:"-p"`
-	Snapshot string `arg:"-s" help:"Snapshot file"`
-	Upgrade  bool   `arg:"--upgrade" help:"Monitor upgrade status"`
-	Username string `arg:"-u"`
-	Verbose  bool   `arg:"-v"`
-}
-
-type Fault struct {
-	code     string
-	descr    string
-	dn       string
-	json     gjson.Result
-	severity string
-}
-
-func makeFault(json gjson.Result) Fault {
-	return Fault{
-		json:     json,
-		dn:       json.Get("dn").Str,
-		severity: json.Get("severity").Str,
-		descr:    json.Get("descr").Str,
-		code:     json.Get("code").Str,
+func (c Client) NewURL(q Query) string {
+	res := fmt.Sprintf("https://%s%s.json", options.IP, q.uri)
+	if len(q.query) > 0 {
+		return fmt.Sprintf("%s?%s", res, strings.Join(q.query, "&"))
 	}
+	return res
 }
 
-type Device struct {
-	json    gjson.Result
-	dn      string
-	address string
-	name    string
-	role    string
-}
-
-func makeDevice(json gjson.Result) Device {
-	return Device{
-		json:    json,
-		dn:      json.Get("dn").Str,
-		address: json.Get("address").Str,
-		name:    json.Get("name").Str,
-		role:    json.Get("role").Str,
-	}
-}
-
-type Running struct {
-	json    gjson.Result
-	version string
-}
-
-func makeRunning(json gjson.Result) Running {
-	return Running{
-		json:    json,
-		version: json.Get("version").Str,
-	}
-}
-
-type Job struct {
-	json             gjson.Result
-	upgradeStatus    string
-	upgradeStatusStr string
-	instlProgPct     int64
-	fwGrp            string
-	desiredVersion   string
-	maintGrp         string
-}
-
-func makeJob(json gjson.Result) Job {
-	return Job{
-		json:             json,
-		upgradeStatus:    json.Get("upgradeStatus").Str,
-		upgradeStatusStr: json.Get("upgradeStatusStr").Str,
-		instlProgPct:     json.Get("instlProgPct").Int(),
-		fwGrp:            json.Get("fwGrp").Str,
-		desiredVersion:   json.Get("desiredVersion").Str,
-		maintGrp:         json.Get("maintGrp").Str,
-	}
-}
-
-type Snapshot struct {
-	json    gjson.Result
-	faults  []Fault
-	devices []Device
-}
-
-func makeSnapshot(json gjson.Result) Snapshot {
-	var faults []Fault
-	var devices []Device
-	for _, fault := range json.Get("faults").Array() {
-		faults = append(faults, makeFault(fault))
-	}
-	for _, device := range json.Get("devices").Array() {
-		devices = append(devices, makeDevice(device))
-	}
-	return Snapshot{
-		json:    json,
-		faults:  faults,
-		devices: devices,
-	}
-}
-
-type Status struct {
-	device  Device
-	job     Job
-	running Running
-}
-
-const (
-	stable = iota + 1
-	upgrading
-)
-
-func (f Fabric) url(fragment string) string {
-	return fmt.Sprintf("https://%s%s.json", f.options.IP, fragment)
-}
-
-func (f Fabric) refresh() error {
-	_, err := f.get("/api/aaaRefresh")
-	return err
-}
-
-func (f Fabric) get(fragment string) (gjson.Result, error) {
-	url := f.url(fragment)
-	log.Debug(fmt.Sprintf("GET request to %s", fragment))
-	res, err := f.client.Get(url)
+func (c Client) get(query Query) (JSON, error) {
+	url := c.NewURL(query)
+	log.Debug(fmt.Sprintf("GET request to %s", query.uri))
+	res, err := c.client.Get(url)
 	if err != nil {
-		return gjson.Result{}, err
+		return JSON{}, err
 	}
 	defer res.Body.Close()
+	if res.StatusCode != http.StatusOK {
+		return JSON{}, errors.New(fmt.Sprintf(
+			"HTTP response: %s.", res.Status))
+	}
 	body, err := ioutil.ReadAll(res.Body)
 	if err != nil {
-		return gjson.Result{}, err
+		return JSON{}, err
 	}
 	return gjson.GetBytes(body, "imdata"), nil
 }
 
-func (f Fabric) login() error {
-	fragment := "/api/aaaLogin"
-	url := f.url(fragment)
+func (c Client) login() error {
+	uri := "/api/aaaLogin"
+	url := c.NewURL(Query{uri: uri})
 	data := fmt.Sprintf(`{"aaaUser":{"attributes":{"name":"%s","pwd":"%s"}}}`,
-		f.options.Username, f.options.Password)
-	log.Debug(fmt.Sprintf("GET request to %s", fragment))
-	res, err := f.client.Post(url, "json", strings.NewReader(data))
+		options.Username, options.Password)
+	log.Debug(fmt.Sprintf("GET request to %s", uri))
+	res, err := c.client.Post(url, "json", strings.NewReader(data))
 	if err != nil {
 		return err
 	}
@@ -221,167 +113,447 @@ func (f Fabric) login() error {
 	return nil
 }
 
-func input(prompt string) string {
-	reader := bufio.NewReader(os.Stdin)
-	fmt.Printf("%s ", prompt)
-	input, _ := reader.ReadString('\n')
-	return strings.Trim(input, "\r\n")
+func (c Client) refresh() error {
+	_, err := c.get(Query{uri: "/api/aaaRefresh"})
+	return err
 }
 
-func getArgs() Args {
-	args := Args{Snapshot: "snapshot.json"}
-	arg.MustParse(&args)
-	if args.IP == "" {
-		args.IP = input("APIC IP:")
+////////////////////////////////////////////////////////////
+// Logger
+////////////////////////////////////////////////////////////
+
+func NewLogger() *logrus.Logger {
+	logrus.SetFormatter(&logrus.TextFormatter{ForceColors: true})
+	logrus.SetOutput(colorable.NewColorableStdout())
+	logger := logrus.New()
+	if options.Verbose {
+		logger.SetLevel(logrus.DebugLevel)
 	}
-	if args.Username == "" {
-		args.Username = input("Username:")
+	if options.JSON {
+		logger.SetFormatter(&logrus.JSONFormatter{})
+	} else {
+		logger.SetFormatter(&logrus.TextFormatter{ForceColors: true})
+		logger.SetOutput(colorable.NewColorableStdout())
 	}
-	if args.Password == "" {
-		fmt.Print("Password: ")
-		pwd, _ := terminal.ReadPassword(int(syscall.Stdin))
-		args.Password = string(pwd)
-	}
-	return args
+	return logger
 }
 
-func (Args) Description() string {
-	return "Monitor ACI health status."
+////////////////////////////////////////////////////////////
+// Device
+////////////////////////////////////////////////////////////
+
+type Device struct {
+	json    JSON
+	address string
+	dn      string
+	name    string
+	podId   string
+	role    string
 }
 
-func (Args) Version() string {
-	if Rev == "" {
-		return fmt.Sprintf("Version %s local build", Version)
+func NewDevice(json JSON) (device Device, ok bool) {
+	device = Device{
+		json:    json,
+		address: json.Get("address").Str,
+		dn:      json.Get("dn").Str,
+		name:    json.Get("name").Str,
+		podId:   json.Get("podId").Str,
+		role:    json.Get("role").Str,
 	}
-	return fmt.Sprintf("Version %s Revision %s", Version, Rev)
+	switch device.role {
+	case "remote-leaf-wan":
+		log.WithFields(logrus.Fields{
+			"device": device.name,
+		}).Warn("Ignoring unsupported remote leaf")
+	case "virtual":
+		log.WithFields(logrus.Fields{
+			"device": device.name,
+		}).Warn("Ignoring unsupported virtual leaf")
+	case "leaf", "spine", "controller":
+		// 4.x
+		if device.json.Get("virtualMode").Str != "yes" {
+			return device, true
+		}
+	default:
+		log.WithFields(logrus.Fields{
+			"device": device.name,
+		}).Warn("Ignorning unrecognized device type")
+	}
+	return device, false
 }
 
-func (f Fabric) getDevices() (res []Device) {
-	devices, _ := f.get("/api/class/topSystem")
-	for _, device := range devices.Get("#.topSystem.attributes").Array() {
-		res = append(res, makeDevice(device))
+func (d Device) MarshalJSON() ([]byte, error) {
+	return []byte(d.json.Raw), nil
+}
+
+func (c Client) getDevices() (res []Device, err error) {
+	devices, err := c.get(Query{uri: "/api/class/topSystem"})
+	if err != nil {
+		return
+	}
+	for _, record := range devices.Get("#.topSystem.attributes").Array() {
+		if device, ok := NewDevice(record); ok {
+			res = append(res, device)
+		}
 	}
 	return
 }
 
-func (f Fabric) getFaults() (res []Fault) {
-	faults, _ := f.get("/api/class/faultInfo")
+////////////////////////////////////////////////////////////
+// Fault
+////////////////////////////////////////////////////////////
+
+type Fault struct {
+	json     JSON
+	code     string
+	descr    string
+	dn       string
+	severity string
+}
+
+func NewFault(json JSON) Fault {
+	return Fault{
+		json:     json,
+		code:     json.Get("code").Str,
+		descr:    json.Get("descr").Str,
+		dn:       json.Get("dn").Str,
+		severity: json.Get("severity").Str,
+	}
+}
+
+func (f Fault) MarshalJSON() ([]byte, error) {
+	return []byte(f.json.Raw), nil
+}
+
+func (c Client) getFaults() (res []Fault, err error) {
+	faults, err := c.get(Query{uri: "/api/class/faultInfo"})
+	if err != nil {
+		return
+	}
 	for _, fault := range faults.Get("#.faultInst.attributes").Array() {
-		res = append(res, makeFault(fault))
+		res = append(res, NewFault(fault))
 	}
 	return
 }
 
-func (f Fabric) getAPICStatus(device Device) (Status, error) {
-	dn := device.dn
-	urlJob := fmt.Sprintf("/api/mo/%s/ctrlrfwstatuscont/upgjob", dn)
-	urlRunning := fmt.Sprintf("/api/mo/%s/ctrlrfwstatuscont/ctrlrrunning", dn)
-	job, err := f.get(urlJob)
-	if err != nil {
-		return Status{}, err
+type FaultsByCode = map[string][]Fault
+
+func appendFaultByCode(byCode FaultsByCode, fault Fault) FaultsByCode {
+	if faults, ok := byCode[fault.code]; ok {
+		byCode[fault.code] = append(faults, fault)
+	} else {
+		byCode[fault.code] = []Fault{fault}
 	}
-	running, err := f.get(urlRunning)
-	if err != nil {
-		return Status{}, err
-	}
-	return Status{
-		device:  device,
-		job:     makeJob(job.Get("0|maintUpgJob|attributes")),
-		running: makeRunning(running.Get("0|firmwareCtrlrRunning|attributes")),
-	}, nil
+	return byCode
 }
 
-func (f Fabric) getSwitchStatus(device Device) (Status, error) {
-	dn := device.dn
-	urlJob := fmt.Sprintf("/api/mo/%s/fwstatuscont/upgjob", dn)
-	urlRunning := fmt.Sprintf("/api/mo/%s/fwstatuscont/running", dn)
-	job, err := f.get(urlJob)
-	if err != nil {
-		return Status{}, err
+func verifyFaults(faults []Fault, currentFaults []Fault) {
+
+	var faultsByCode = make(FaultsByCode)
+	var newFaultCount int
+	for _, currentFault := range currentFaults {
+		newFault := true
+		for _, previousFault := range faults {
+			if previousFault.dn == currentFault.dn {
+				newFault = false
+			}
+		}
+		if newFault && currentFault.severity != "cleared" {
+			faultsByCode = appendFaultByCode(faultsByCode, currentFault)
+			newFaultCount += 1
+		}
 	}
-	running, err := f.get(urlRunning)
-	if err != nil {
-		return Status{}, err
+	if newFaultCount > 0 {
+		log.Warn(fmt.Sprintf("%d new fault(s) since previous snapshot.",
+			newFaultCount))
+		if !options.Verbose {
+			log.Info(`Use "verbose" mode to see full fault list.`)
+		}
+		for _, faults := range faultsByCode {
+			if options.Verbose {
+				for i, fault := range faults {
+					log.WithFields(logrus.Fields{
+						"code":        fault.code,
+						"severity":    fault.severity,
+						"description": fault.descr,
+						"count":       fmt.Sprintf("%d of %d", i, len(faults)),
+					}).Warn("new fault")
+				}
+			} else {
+				fault := faults[0]
+				log.WithFields(logrus.Fields{
+					"code":        fault.code,
+					"severity":    fault.severity,
+					"description": fault.descr,
+					"count":       len(faults),
+				}).Warn(fmt.Sprintf("%d new %s fault(s)", len(faults), fault.code))
+			}
+		}
+	} else {
+		log.Info("No new faults since snapshot.")
 	}
-	return Status{
-		device:  device,
-		job:     makeJob(job.Get("0|maintUpgJob|attributes")),
-		running: makeRunning(running.Get("0|firmwareRunning|attributes")),
-	}, nil
 }
 
-func (f Fabric) getUpgradeStatus(devices []Device) (res []Status, err error) {
-	log.Info("Querying devices for upgrade state. Please wait...")
-	for _, device := range devices {
-		switch device.role {
-		case "controller":
-			status, err := f.getAPICStatus(device)
-			if err != nil {
-				return res, err
-			}
-			res = append(res, status)
-		case "leaf", "spine":
-			status, err := f.getSwitchStatus(device)
-			if err != nil {
-				return res, err
-			}
-			res = append(res, status)
-		case "remote-leaf-wan":
-			log.WithFields(logrus.Fields{
-				"message": "Unsupported remote leaf",
-				"device":  device.name,
-			}).Warn("Unsupported Device")
+////////////////////////////////////////////////////////////
+// Pod
+////////////////////////////////////////////////////////////
+
+type Pod struct {
+	json    JSON
+	dn      string
+	podId   string
+	tepPool string
+}
+
+func (p Pod) MarshalJSON() ([]byte, error) {
+	return []byte(p.json.Raw), nil
+}
+
+func NewPod(json JSON) Pod {
+	return Pod{
+		json:    json,
+		dn:      json.Get("dn").Str,
+		podId:   json.Get("podId").Str,
+		tepPool: json.Get("tepPool").Str,
+	}
+}
+
+func (c Client) getPods() (res []Pod, err error) {
+	pods, err := c.get(Query{uri: "/api/class/fabricSetupP"})
+	if err != nil {
+		return
+	}
+	for _, pod := range pods.Get("#.fabricSetupP.attributes").Array() {
+		switch pod.Get("podType").Str {
+		case "physical":
+			res = append(res, NewPod(pod))
 		case "virtual":
 			log.WithFields(logrus.Fields{
-				"message": "Unsupported virtual leaf",
-				"device":  device.name,
-			}).Warn("Unsupported Device")
+				"pod": pod.Get("podId").Str,
+			}).Debug("Ignoring unsupported virtual pod")
+		}
+	}
+	return
+}
+
+////////////////////////////////////////////////////////////
+// ISISRoute
+////////////////////////////////////////////////////////////
+
+type ISISRoute struct {
+	json JSON
+	dn   string
+}
+
+func (r ISISRoute) MarshalJSON() ([]byte, error) {
+	return []byte(r.json.Raw), nil
+}
+
+func NewISISRoute(json JSON) ISISRoute {
+	return ISISRoute{
+		json: json,
+		dn:   json.Get("dn").Str,
+	}
+}
+
+func (c Client) getISISRoutes(pods []Pod) (res []ISISRoute, err error) {
+	var tepQueries []string
+	for _, pod := range pods {
+		queryString := fmt.Sprintf(`eq(isisRoute.pfx,"%s")`, pod.tepPool)
+		tepQueries = append(tepQueries, queryString)
+	}
+	routes, err := c.get(Query{
+		uri: "/api/node/class/isisRoute",
+		query: []string{
+			"rsp-subtree-include=relations",
+			fmt.Sprintf("query-target-filter=or(%s)", strings.Join(tepQueries, ",")),
+		},
+	})
+	if err != nil {
+		return
+	}
+	for _, record := range routes.Get("#.isisNexthop.attributes").Array() {
+		res = append(res, NewISISRoute(record))
+	}
+	return
+}
+
+func verifyInterpodRoutes(fabric Fabric, currentRoutes []ISISRoute) {
+	var convergingCount int
+	for _, device := range fabric.devices {
+		if device.role != "leaf" {
+			continue
+		}
+		var expectedRoutes int
+		for _, route := range fabric.isisRoutes {
+			if strings.HasPrefix(route.dn, device.dn) {
+				expectedRoutes++
+			}
+		}
+		var routes int
+		for _, route := range currentRoutes {
+			if strings.HasPrefix(route.dn, device.dn) {
+				routes++
+			}
+		}
+		switch {
+		case routes < expectedRoutes:
+			convergingCount++
+			log.WithFields(logrus.Fields{
+				"name":            device.name,
+				"expected routes": expectedRoutes,
+				"actual routes":   routes,
+			}).Warn("Less IPN routes than in snapshot")
+		case routes > expectedRoutes:
+			log.WithFields(logrus.Fields{
+				"name":            device.name,
+				"expected routes": expectedRoutes,
+				"actual routes":   routes,
+			}).Warn("More IPN routes than in snapshot")
+			log.Warn("Snapshot appears to have missing routes")
 		default:
 			log.WithFields(logrus.Fields{
-				"message": "Unrecognized device type",
-				"device":  device.name,
-			}).Warn("Unrecognized Device")
+				"name":            device.name,
+				"expected routes": expectedRoutes,
+				"actual routes":   routes,
+			}).Debug("IPN routes to all spines")
 		}
+	}
+	if convergingCount == 0 {
+		log.Info("IPN routes fully converged.")
+	}
+}
+
+////////////////////////////////////////////////////////////
+// Upgrade Status
+////////////////////////////////////////////////////////////
+
+type Status struct {
+	device  Device
+	job     MaintUpgJob
+	running FirmwareRunning
+}
+
+const (
+	stable = iota + 1
+	upgrading
+)
+
+type MaintUpgJob struct {
+	json             JSON
+	dn               string
+	desiredVersion   string
+	fwGrp            string
+	instlProgPct     int64
+	maintGrp         string
+	upgradeStatus    string
+	upgradeStatusStr string
+}
+
+func (c Client) getMaintUpgJob() (res []MaintUpgJob, err error) {
+	json, err := c.get(Query{uri: "/api/class/maintUpgJob"})
+	if err != nil {
+		return res, err
+	}
+	for _, record := range json.Get("#.maintUpgJob.attributes").Array() {
+		res = append(res, MaintUpgJob{
+			json:             record,
+			dn:               record.Get("dn").Str,
+			desiredVersion:   record.Get("desiredVersion").Str,
+			fwGrp:            record.Get("fwGrp").Str,
+			instlProgPct:     record.Get("instlProgPct").Int(),
+			maintGrp:         record.Get("maintGrp").Str,
+			upgradeStatus:    record.Get("upgradeStatus").Str,
+			upgradeStatusStr: record.Get("upgradeStatusStr").Str,
+		})
 	}
 	return res, nil
 }
 
-func createNewSnapshot(f Fabric, fn string) Snapshot {
-	log.Info(fmt.Sprintf("Creating new snapshot %s...", fn))
-	var faultJSON string
-	faults := f.getFaults()
-	for _, fault := range faults {
-		faultJSON += fault.json.Raw
+type FirmwareRunning struct {
+	json    JSON
+	dn      string
+	version string
+}
+
+func (c Client) getFirmwareRunning() (res []FirmwareRunning, err error) {
+	json, err := c.get(Query{uri: "/api/class/firmwareRunning"})
+	if err != nil {
+		return res, err
 	}
-	var deviceJSON string
-	devices := f.getDevices()
+	records := json.Get("#.firmwareRunning.attributes").Array()
+	for _, record := range records {
+		res = append(res, FirmwareRunning{
+			json:    record,
+			dn:      record.Get("dn").Str,
+			version: record.Get("version").Str,
+		})
+	}
+	return res, nil
+}
+
+func (c Client) getFirmwareCtrlrRunning() (res []FirmwareRunning, err error) {
+	json, err := c.get(Query{uri: "/api/class/firmwareCtrlrRunning"})
+	if err != nil {
+		return res, err
+	}
+	records := json.Get("#.firmwareCtrlrRunning.attributes").Array()
+	for _, record := range records {
+		res = append(res, FirmwareRunning{
+			json:    record,
+			dn:      record.Get("dn").Str,
+			version: record.Get("version").Str,
+		})
+	}
+	return res, nil
+}
+
+func (c Client) getUpgradeStatuses(devices []Device) (res []Status, err error) {
+	log.Info("Querying devices for upgrade state. Please wait...")
+	maintUpgJobs, err := c.getMaintUpgJob()
+	if err != nil {
+		return res, err
+	}
+	firmwareRunnings, err := c.getFirmwareRunning()
+	if err != nil {
+		return res, err
+	}
+	firmwareCtrlrRunnings, err := c.getFirmwareCtrlrRunning()
+	if err != nil {
+		return res, err
+	}
 	for _, device := range devices {
-		deviceJSON += device.json.Raw
-	}
-	data := fmt.Sprintf(`{"faults":[%s],"devices":[%s]}`, faultJSON, deviceJSON)
-	prettyData := gjson.Get(data, "@pretty").Raw
-	if err := ioutil.WriteFile(fn, []byte(prettyData), 0644); err != nil {
-		panic(err)
-	}
-	return makeSnapshot(gjson.Parse(data))
-
-}
-
-func (f Fabric) readSnapshot() Snapshot {
-	fn := f.options.Snapshot
-	if _, err := os.Stat(fn); err == nil {
-		log.Info(fmt.Sprintf(`Loading snapshot "%s"...`, fn))
-		data, err := ioutil.ReadFile(fn)
-		if err != nil {
-			panic(err)
+		var firmwareRunningArray []FirmwareRunning
+		var firmwareRunningDN, maintUpgJobDN string
+		status := Status{device: device}
+		switch device.role {
+		case "controller":
+			firmwareRunningDN = device.dn + "/ctrlfwstatuscont/ctrlrrunning"
+			maintUpgJobDN = device.dn + "/ctrlrfwstatuscont/upgjob"
+			firmwareRunningArray = firmwareCtrlrRunnings
+		case "leaf", "spine":
+			firmwareRunningDN = device.dn + "/fwstatuscont/running"
+			maintUpgJobDN = device.dn + "/fwstatuscont/upgjob"
+			firmwareRunningArray = firmwareRunnings
 		}
-		return makeSnapshot(gjson.ParseBytes(data))
-	} else {
-		return createNewSnapshot(f, fn)
+		for _, firmwareRunning := range firmwareRunningArray {
+			if firmwareRunning.dn == firmwareRunningDN {
+				status.running = firmwareRunning
+				break
+			}
+		}
+		for _, maintUpgJob := range maintUpgJobs {
+			if maintUpgJob.dn == maintUpgJobDN {
+				status.job = maintUpgJob
+				break
+			}
+		}
+		res = append(res, status)
 	}
+	return
 }
 
-func (f Fabric) parseUpgradeState(statuses []Status) int {
+func verifyUpgradeState(statuses []Status) int {
 	sorted := struct {
 		scheduled   []Status
 		queued      []Status
@@ -410,9 +582,7 @@ func (f Fabric) parseUpgradeState(statuses []Status) int {
 		log.Info(fmt.Sprintf("%d device(s) scheduled for upgrade.",
 			len(sorted.scheduled)))
 		log.Info("Note that these will not start upgrading without a trigger.")
-		if !f.options.Verbose {
-			log.Info(`Use "verbose" option to view details of scheduled devices.`)
-		}
+		log.Info(`"verbose" option will show details of scheduled devices.`)
 		for _, status := range sorted.scheduled {
 			log.WithFields(logrus.Fields{
 				"name":              status.device.name,
@@ -494,119 +664,246 @@ func (f Fabric) parseUpgradeState(statuses []Status) int {
 	return upgrading
 }
 
-type FaultsByCode = map[string][]Fault
+////////////////////////////////////////////////////////////
+// Fabric Snapshot
+////////////////////////////////////////////////////////////
 
-func appendFaultByCode(byCode FaultsByCode, fault Fault) FaultsByCode {
-	if faults, ok := byCode[fault.code]; ok {
-		byCode[fault.code] = append(faults, fault)
-	} else {
-		byCode[fault.code] = []Fault{fault}
-	}
-	return byCode
+type Fabric struct {
+	json       JSON
+	faults     []Fault
+	devices    []Device
+	pods       []Pod
+	isisRoutes []ISISRoute
+	timestamp  time.Time
 }
 
-func (f Fabric) checkFaults(faults []Fault) {
-	var faultsByCode = make(FaultsByCode)
-	var newFaultCount int
-	for _, currentFault := range f.getFaults() {
-		newFault := true
-		for _, previousFault := range faults {
-			if previousFault.dn == currentFault.dn {
-				newFault = false
-			}
-		}
-		if newFault && currentFault.severity != "cleared" {
-			faultsByCode = appendFaultByCode(faultsByCode, currentFault)
-			newFaultCount += 1
+func NewFabric(json JSON) Fabric {
+	var faults []Fault
+	var devices []Device
+	var pods []Pod
+	var isisRoutes []ISISRoute
+	for _, record := range json.Get("faults").Array() {
+		faults = append(faults, NewFault(record))
+	}
+	for _, record := range json.Get("devices").Array() {
+		if device, ok := NewDevice(record); ok {
+			devices = append(devices, device)
 		}
 	}
-	if newFaultCount > 0 {
-		log.Warn(fmt.Sprintf("%d new fault(s) since previous snapshot.",
-			newFaultCount))
-		if !f.options.Verbose {
-			log.Info(`Use "verbose" mode to see full fault list.`)
-		}
-		for _, faults := range faultsByCode {
-			if f.options.Verbose {
-				for i, fault := range faults {
-					log.WithFields(logrus.Fields{
-						"code":        fault.code,
-						"severity":    fault.severity,
-						"description": fault.descr,
-						"count":       fmt.Sprintf("%d of %d", i, len(faults)),
-					}).Warn("new fault")
-				}
-			} else {
-				fault := faults[0]
-				log.WithFields(logrus.Fields{
-					"code":        fault.code,
-					"severity":    fault.severity,
-					"description": fault.descr,
-					"count":       len(faults),
-				}).Warn(fmt.Sprintf("%d new %s fault(s)", len(faults), fault.code))
-			}
-		}
-	} else {
-		log.Info("No new faults since snapshot.")
+	for _, record := range json.Get("pods").Array() {
+		pods = append(pods, NewPod(record))
+	}
+	for _, record := range json.Get("isisRoutes").Array() {
+		isisRoutes = append(isisRoutes, NewISISRoute(record))
+	}
+	return Fabric{
+		json:       json,
+		faults:     faults,
+		devices:    devices,
+		pods:       pods,
+		isisRoutes: isisRoutes,
+		timestamp:  time.Now(),
 	}
 }
 
-func (f Fabric) requestLoop(snapshot Snapshot) error {
+func (f Fabric) MarshalJSON() ([]byte, error) {
+	return json.Marshal(map[string]interface{}{
+		"faults":     f.faults,
+		"devices":    f.devices,
+		"pods":       f.pods,
+		"isisRoutes": f.isisRoutes,
+		"timestamp":  f.timestamp,
+	})
+}
+
+func (c Client) getFabric() Fabric {
+	var faults []Fault
+	var devices []Device
+	var pods []Pod
+	var isisRoutes []ISISRoute
+	for ok := false; !ok; {
+		// Don't write file until data has been fetched successfully
+		var err error
+		faults, err = c.getFaults()
+		devices, err = c.getDevices()
+		pods, err = c.getPods()
+		isisRoutes, err = c.getISISRoutes(pods)
+		if err != nil {
+			log.Error(err)
+		} else {
+			ok = true
+		}
+	}
+	return Fabric{
+		faults:     faults,
+		devices:    devices,
+		pods:       pods,
+		isisRoutes: isisRoutes,
+		timestamp:  time.Now(),
+	}
+}
+
+func (c Client) createNewSnapshot(fn string, fabric Fabric) Fabric {
+	prettyData, _ := json.MarshalIndent(fabric, "", "  ")
+	if err := ioutil.WriteFile(fn, prettyData, 0644); err != nil {
+		panic(err)
+	}
+	return fabric
+}
+
+func (c Client) readSnapshot() (fabric Fabric) {
+	fn := options.Snapshot
+	if _, err := os.Stat(fn); err == nil {
+		log.Info(fmt.Sprintf(`Loading snapshot "%s"...`, fn))
+		data, err := ioutil.ReadFile(fn)
+		if err != nil {
+			panic(err)
+		}
+		json := gjson.ParseBytes(data)
+		fabric = NewFabric(json)
+		var currentFabric Fabric
+		var fetched bool
+		getFabricsOnce := func() Fabric {
+			if !fetched {
+				currentFabric = c.getFabric()
+				fetched = true
+			}
+			return currentFabric
+		}
+		if !json.Get("faults").Exists() {
+			fabric.faults = getFabricsOnce().faults
+		}
+		if !json.Get("devices").Exists() {
+			fabric.devices = getFabricsOnce().devices
+		}
+		if !json.Get("pods").Exists() {
+			fabric.pods = getFabricsOnce().pods
+		}
+		if !json.Get("timestamp").Exists() {
+			fabric.timestamp = getFabricsOnce().timestamp
+		}
+		if !json.Get("isisRoutes").Exists() {
+			fabric.isisRoutes = getFabricsOnce().isisRoutes
+		}
+		if fetched {
+			log.Info(fmt.Sprintf("Updating snapshot %s...", fn))
+			c.createNewSnapshot(fn, fabric)
+		}
+	} else {
+		log.Info(fmt.Sprintf("Creating new snapshot %s...", fn))
+		fabric = c.createNewSnapshot(fn, c.getFabric())
+	}
+	return
+}
+
+////////////////////////////////////////////////////////////
+// Options
+////////////////////////////////////////////////////////////
+
+type Options struct {
+	IP       string `arg:"-i" help:"fabric IP address"`
+	JSON     bool   `arg:"--json" help:"JSON logger, e.g. for splunk"`
+	Password string `arg:"-p"`
+	Snapshot string `arg:"-s" help:"Snapshot file"`
+	// Upgrade  bool   `arg:"--upgrade" help:"Monitor upgrade status"`
+	Username string `arg:"-u"`
+	Verbose  bool   `arg:"-v"`
+}
+
+func (Options) Description() string {
+	return "Monitor ACI health status."
+}
+
+func (Options) Version() string {
+	if Rev == "" {
+		return fmt.Sprintf("Version %s local build", Version)
+	}
+	return fmt.Sprintf("Version %s Revision %s", Version, Rev)
+}
+
+func input(prompt string) string {
+	reader := bufio.NewReader(os.Stdin)
+	fmt.Printf("%s ", prompt)
+	input, _ := reader.ReadString('\n')
+	return strings.Trim(input, "\r\n")
+}
+
+func getOptions() Options {
+	args := Options{Snapshot: "snapshot.json"}
+	arg.MustParse(&args)
+	if args.IP == "" {
+		args.IP = input("APIC IP:")
+	}
+	if args.Username == "" {
+		args.Username = input("Username:")
+	}
+	if args.Password == "" {
+		fmt.Print("Password: ")
+		pwd, _ := terminal.ReadPassword(int(syscall.Stdin))
+		args.Password = string(pwd)
+	}
+	return args
+}
+
+////////////////////////////////////////////////////////////
+// Main execution flow
+////////////////////////////////////////////////////////////
+
+func (c Client) requestLoop(fabric Fabric) error {
 	lastRefresh := time.Now()
 	for {
 		if time.Since(lastRefresh) >= (8 * time.Minute) {
-			err := f.refresh()
-			if err != nil {
+			if err := c.refresh(); err != nil {
 				return err
 			}
 		}
-		if f.options.Upgrade {
-			statuses, err := f.getUpgradeStatus(snapshot.devices)
+		statuses, err := c.getUpgradeStatuses(fabric.devices)
+		if err != nil {
+			return err
+		}
+		if verifyUpgradeState(statuses) == stable {
+			currentFaults, err := c.getFaults()
 			if err != nil {
 				return err
 			}
-			if f.parseUpgradeState(statuses) == stable {
-				f.checkFaults(snapshot.faults)
+			verifyFaults(fabric.faults, currentFaults)
+			if len(fabric.pods) > 1 {
+				isisRoutes, err := c.getISISRoutes(fabric.pods)
+				if err != nil {
+					return err
+				}
+				verifyInterpodRoutes(fabric, isisRoutes)
 			}
-		} else {
-			f.checkFaults(snapshot.faults)
 		}
 		log.Info("Sleeping for 10 seconds...")
 		time.Sleep(10 * time.Second)
 	}
 }
 
-func (f Fabric) loginLoop() (ok bool) {
-	err := f.login()
+func (c Client) loginLoop() (ok bool) {
+	err := c.login()
 	for err != nil {
 		log.Error(err)
 		log.Info("Note, that login failures are expected on device reload.")
 		log.Info("If this is the initial login, hit Ctrl-C and verify login details.")
 		log.Info("Waiting 60 seconds before trying again...")
 		time.Sleep(60 * time.Second)
-		err = f.login()
+		err = c.login()
 	}
 	return true
 }
 
-func init() {
-	http.DefaultTransport.(*http.Transport).TLSClientConfig = &tls.Config{
-		InsecureSkipVerify: true,
-	}
-	logrus.SetFormatter(&logrus.TextFormatter{ForceColors: true})
-	logrus.SetOutput(colorable.NewColorableStdout())
-	log = logrus.New()
-}
-
 func main() {
-	f := makeFabric()
+	options = getOptions()
+	log = NewLogger()
+	c := NewClient()
 	log.Info("Running: Hit Ctrl-C to stop")
-	f.loginLoop()
-	snapshot := f.readSnapshot()
+	c.loginLoop()
+	fabric := c.readSnapshot()
 	for {
-		if err := f.requestLoop(snapshot); err != nil {
+		if err := c.requestLoop(fabric); err != nil {
 			log.Error(err)
 		}
-		f.loginLoop()
+		c.loginLoop()
 	}
 }
