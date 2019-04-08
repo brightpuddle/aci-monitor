@@ -16,13 +16,14 @@ import (
 	"github.com/alexflint/go-arg"
 	_ "github.com/konsorten/go-windows-terminal-sequences"
 	"github.com/mattn/go-colorable"
+	"github.com/orandin/lumberjackrus"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 	"github.com/tidwall/gjson"
 	"golang.org/x/crypto/ssh/terminal"
 )
 
-const Version = "0.1.5"
+const Version = "0.2.0"
 
 var Rev string
 var log *logrus.Logger
@@ -49,7 +50,7 @@ func NewClient() Client {
 	}
 	cookieJar, err := cookiejar.New(nil)
 	if err != nil {
-		panic(err)
+		log.Panic(err)
 	}
 	httpClient := http.Client{
 		Timeout: time.Second * 30,
@@ -129,12 +130,24 @@ func NewLogger() *logrus.Logger {
 	if options.Verbose {
 		logger.SetLevel(logrus.DebugLevel)
 	}
-	if options.JSON {
-		logger.SetFormatter(&logrus.JSONFormatter{})
-	} else {
-		logger.SetFormatter(&logrus.TextFormatter{ForceColors: true})
-		logger.SetOutput(colorable.NewColorableStdout())
+	logger.SetFormatter(&logrus.TextFormatter{ForceColors: true})
+	logger.SetOutput(colorable.NewColorableStdout())
+	hook, err := lumberjackrus.NewHook(
+		&lumberjackrus.LogFile{
+			Filename:   "aci-monitor.log",
+			MaxSize:    100,
+			MaxBackups: 1,
+			MaxAge:     1,
+			Compress:   true,
+		},
+		logrus.InfoLevel,
+		&logrus.JSONFormatter{},
+		&lumberjackrus.LogFileOpts{},
+	)
+	if err != nil {
+		panic(err)
 	}
+	logger.AddHook(hook)
 	return logger
 }
 
@@ -746,7 +759,7 @@ func (c Client) getFabric() Fabric {
 func (c Client) createNewSnapshot(fn string, fabric Fabric) Fabric {
 	prettyData, _ := json.MarshalIndent(fabric, "", "  ")
 	if err := ioutil.WriteFile(fn, prettyData, 0644); err != nil {
-		panic(err)
+		log.Panic(err)
 	}
 	return fabric
 }
@@ -757,7 +770,7 @@ func (c Client) readSnapshot() (fabric Fabric) {
 		log.Info(fmt.Sprintf(`Loading snapshot "%s"...`, fn))
 		data, err := ioutil.ReadFile(fn)
 		if err != nil {
-			panic(err)
+			log.Panic(err)
 		}
 		json := gjson.ParseBytes(data)
 		fabric = NewFabric(json)
@@ -802,7 +815,6 @@ func (c Client) readSnapshot() (fabric Fabric) {
 
 type Options struct {
 	IP       string `arg:"-i" help:"fabric IP address"`
-	JSON     bool   `arg:"--json" help:"JSON logger, e.g. for splunk"`
 	Password string `arg:"-p"`
 	Snapshot string `arg:"-s" help:"Snapshot file"`
 	// Upgrade  bool   `arg:"--upgrade" help:"Monitor upgrade status"`
