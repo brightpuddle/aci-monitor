@@ -905,9 +905,12 @@ func (c Client) loginLoop() (ok bool) {
 	return true
 }
 
-func main() {
+func init() {
 	options = getOptions()
 	log = NewLogger()
+}
+
+func main() {
 	c := NewClient()
 	log.Info("Running: Hit Ctrl-C to stop")
 	c.loginLoop()
