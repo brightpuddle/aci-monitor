@@ -36,11 +36,13 @@ Display additional logging info to the terminal, e.g. each HTTP request, etc.
 `-s --snapshot`
 Filename for the snapshot. The default is `snapshot.json`. As the name implies, this file is in JSON, and pretty printed for human-readibility. It contains a list of active devices and faults on the network at the point when created. The recommendation is to create a new snapshot surrounding a change or upgrade to ensure post-change status hasn't introduced any additional faults.
 
-`--json`
-Output all logging data in JSON format for data analysis tools, e.g. Splunk.
 
 
-Note that the `--upgrade` option was deprecated. The tool monitors upgrade status by default now. Querying upgrade status only requires three API calls, so there's minimal overhead in hcecking this all the time, even in routine (non-upgrade) maintenance.
+**Note** that the following features were deprecated:
+
+`--upgrade` The tool monitors upgrade status by default now. Querying upgrade status only requires three API calls, so there's minimal overhead in checking this all the time, even in routine (non-upgrade) maintenance.
+
+`--json` The tool now logs JSON data to `aci-monitor.log` and provides log rotation and compression by default. It does this in addition to the standard logging to the console.
 
 ## Future
 - [x] Timestamp snapshot file
