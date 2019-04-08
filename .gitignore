@@ -1,3 +1,6 @@
+# Log files
+*.log
+
 # Monitor snapshot files
 *snapshot*
 
