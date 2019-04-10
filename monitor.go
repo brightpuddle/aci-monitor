@@ -44,7 +44,7 @@ type Query struct {
 	query []string
 }
 
-func NewClient() Client {
+func newClient() Client {
 	http.DefaultTransport.(*http.Transport).TLSClientConfig = &tls.Config{
 		InsecureSkipVerify: true,
 	}
@@ -123,7 +123,7 @@ func (c Client) refresh() error {
 // Logger
 ////////////////////////////////////////////////////////////
 
-func NewLogger() *logrus.Logger {
+func newLogger() *logrus.Logger {
 	logrus.SetFormatter(&logrus.TextFormatter{ForceColors: true})
 	logrus.SetOutput(colorable.NewColorableStdout())
 	logger := logrus.New()
@@ -164,7 +164,7 @@ type Device struct {
 	role    string
 }
 
-func NewDevice(json JSON) (device Device, ok bool) {
+func newDevice(json JSON) (device Device, ok bool) {
 	device = Device{
 		json:    json,
 		address: json.Get("address").Str,
@@ -205,7 +205,7 @@ func (c Client) getDevices() (res []Device, err error) {
 		return
 	}
 	for _, record := range devices.Get("#.topSystem.attributes").Array() {
-		if device, ok := NewDevice(record); ok {
+		if device, ok := newDevice(record); ok {
 			res = append(res, device)
 		}
 	}
@@ -224,7 +224,7 @@ type Fault struct {
 	severity string
 }
 
-func NewFault(json JSON) Fault {
+func newFault(json JSON) Fault {
 	return Fault{
 		json:     json,
 		code:     json.Get("code").Str,
@@ -244,7 +244,7 @@ func (c Client) getFaults() (res []Fault, err error) {
 		return
 	}
 	for _, fault := range faults.Get("#.faultInst.attributes").Array() {
-		res = append(res, NewFault(fault))
+		res = append(res, newFault(fault))
 	}
 	return
 }
@@ -322,7 +322,7 @@ func (p Pod) MarshalJSON() ([]byte, error) {
 	return []byte(p.json.Raw), nil
 }
 
-func NewPod(json JSON) Pod {
+func newPod(json JSON) Pod {
 	return Pod{
 		json:    json,
 		dn:      json.Get("dn").Str,
@@ -339,7 +339,7 @@ func (c Client) getPods() (res []Pod, err error) {
 	for _, pod := range pods.Get("#.fabricSetupP.attributes").Array() {
 		switch pod.Get("podType").Str {
 		case "physical":
-			res = append(res, NewPod(pod))
+			res = append(res, newPod(pod))
 		case "virtual":
 			log.WithFields(logrus.Fields{
 				"pod": pod.Get("podId").Str,
@@ -362,7 +362,7 @@ func (r ISISRoute) MarshalJSON() ([]byte, error) {
 	return []byte(r.json.Raw), nil
 }
 
-func NewISISRoute(json JSON) ISISRoute {
+func newISISRoute(json JSON) ISISRoute {
 	return ISISRoute{
 		json: json,
 		dn:   json.Get("dn").Str,
@@ -386,7 +386,7 @@ func (c Client) getISISRoutes(pods []Pod) (res []ISISRoute, err error) {
 		return
 	}
 	for _, record := range routes.Get("#.isisNexthop.attributes").Array() {
-		res = append(res, NewISISRoute(record))
+		res = append(res, newISISRoute(record))
 	}
 	return
 }
@@ -690,24 +690,24 @@ type Fabric struct {
 	timestamp  time.Time
 }
 
-func NewFabric(json JSON) Fabric {
+func newFabric(json JSON) Fabric {
 	var faults []Fault
 	var devices []Device
 	var pods []Pod
 	var isisRoutes []ISISRoute
 	for _, record := range json.Get("faults").Array() {
-		faults = append(faults, NewFault(record))
+		faults = append(faults, newFault(record))
 	}
 	for _, record := range json.Get("devices").Array() {
-		if device, ok := NewDevice(record); ok {
+		if device, ok := newDevice(record); ok {
 			devices = append(devices, device)
 		}
 	}
 	for _, record := range json.Get("pods").Array() {
-		pods = append(pods, NewPod(record))
+		pods = append(pods, newPod(record))
 	}
 	for _, record := range json.Get("isisRoutes").Array() {
-		isisRoutes = append(isisRoutes, NewISISRoute(record))
+		isisRoutes = append(isisRoutes, newISISRoute(record))
 	}
 	return Fabric{
 		json:       json,
@@ -773,7 +773,7 @@ func (c Client) readSnapshot() (fabric Fabric) {
 			log.Panic(err)
 		}
 		json := gjson.ParseBytes(data)
-		fabric = NewFabric(json)
+		fabric = newFabric(json)
 		var currentFabric Fabric
 		var fetched bool
 		getFabricsOnce := func() Fabric {
@@ -893,25 +893,23 @@ func (c Client) requestLoop(fabric Fabric) error {
 }
 
 func (c Client) loginLoop() (ok bool) {
-	err := c.login()
-	for err != nil {
+	for err := c.login(); err != nil; err = c.login() {
 		log.Error(err)
 		log.Info("Note, that login failures are expected on device reload.")
 		log.Info("If this is the initial login, hit Ctrl-C and verify login details.")
 		log.Info("Waiting 60 seconds before trying again...")
 		time.Sleep(60 * time.Second)
-		err = c.login()
 	}
 	return true
 }
 
 func init() {
 	options = getOptions()
-	log = NewLogger()
+	log = newLogger()
 }
 
 func main() {
-	c := NewClient()
+	c := newClient()
 	log.Info("Running: Hit Ctrl-C to stop")
 	c.loginLoop()
 	fabric := c.readSnapshot()
