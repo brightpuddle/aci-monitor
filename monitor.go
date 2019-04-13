@@ -35,7 +35,7 @@ type JSON = gjson.Result
 // HTTP Client
 ////////////////////////////////////////////////////////////
 
-type Client struct {
+type client struct {
 	client *http.Client
 }
 
@@ -44,7 +44,7 @@ type Query struct {
 	query []string
 }
 
-func newClient() Client {
+func newClient() client {
 	http.DefaultTransport.(*http.Transport).TLSClientConfig = &tls.Config{
 		InsecureSkipVerify: true,
 	}
@@ -56,12 +56,12 @@ func newClient() Client {
 		Timeout: time.Second * 30,
 		Jar:     cookieJar,
 	}
-	return Client{
+	return client{
 		client: &httpClient,
 	}
 }
 
-func (c Client) NewURL(q Query) string {
+func (c client) newURL(q Query) string {
 	res := fmt.Sprintf("https://%s%s.json", options.IP, q.uri)
 	if len(q.query) > 0 {
 		return fmt.Sprintf("%s?%s", res, strings.Join(q.query, "&"))
@@ -69,8 +69,8 @@ func (c Client) NewURL(q Query) string {
 	return res
 }
 
-func (c Client) get(query Query) (JSON, error) {
-	url := c.NewURL(query)
+func (c client) get(query Query) (JSON, error) {
+	url := c.newURL(query)
 	log.Debug(fmt.Sprintf("GET request to %s", query.uri))
 	res, err := c.client.Get(url)
 	if err != nil {
@@ -88,9 +88,9 @@ func (c Client) get(query Query) (JSON, error) {
 	return gjson.GetBytes(body, "imdata"), nil
 }
 
-func (c Client) login() error {
+func (c client) login() error {
 	uri := "/api/aaaLogin"
-	url := c.NewURL(Query{uri: uri})
+	url := c.newURL(Query{uri: uri})
 	data := fmt.Sprintf(`{"aaaUser":{"attributes":{"name":"%s","pwd":"%s"}}}`,
 		options.Username, options.Password)
 	log.Debug(fmt.Sprintf("GET request to %s", uri))
@@ -114,7 +114,7 @@ func (c Client) login() error {
 	return nil
 }
 
-func (c Client) refresh() error {
+func (c client) refresh() error {
 	_, err := c.get(Query{uri: "/api/aaaRefresh"})
 	return err
 }
@@ -160,7 +160,7 @@ type Device struct {
 	address string
 	dn      string
 	name    string
-	podId   string
+	podID   string
 	role    string
 }
 
@@ -170,7 +170,7 @@ func newDevice(json JSON) (device Device, ok bool) {
 		address: json.Get("address").Str,
 		dn:      json.Get("dn").Str,
 		name:    json.Get("name").Str,
-		podId:   json.Get("podId").Str,
+		podID:   json.Get("podId").Str,
 		role:    json.Get("role").Str,
 	}
 	switch device.role {
@@ -199,7 +199,7 @@ func (d Device) MarshalJSON() ([]byte, error) {
 	return []byte(d.json.Raw), nil
 }
 
-func (c Client) getDevices() (res []Device, err error) {
+func (c client) getDevices() (res []Device, err error) {
 	devices, err := c.get(Query{uri: "/api/class/topSystem"})
 	if err != nil {
 		return
@@ -238,7 +238,7 @@ func (f Fault) MarshalJSON() ([]byte, error) {
 	return []byte(f.json.Raw), nil
 }
 
-func (c Client) getFaults() (res []Fault, err error) {
+func (c client) getFaults() (res []Fault, err error) {
 	faults, err := c.get(Query{uri: "/api/class/faultInfo"})
 	if err != nil {
 		return
@@ -273,7 +273,7 @@ func verifyFaults(faults []Fault, currentFaults []Fault) {
 		}
 		if newFault && currentFault.severity != "cleared" {
 			faultsByCode = appendFaultByCode(faultsByCode, currentFault)
-			newFaultCount += 1
+			newFaultCount++
 		}
 	}
 	if newFaultCount > 0 {
@@ -314,7 +314,7 @@ func verifyFaults(faults []Fault, currentFaults []Fault) {
 type Pod struct {
 	json    JSON
 	dn      string
-	podId   string
+	podID   string
 	tepPool string
 }
 
@@ -326,12 +326,12 @@ func newPod(json JSON) Pod {
 	return Pod{
 		json:    json,
 		dn:      json.Get("dn").Str,
-		podId:   json.Get("podId").Str,
+		podID:   json.Get("podId").Str,
 		tepPool: json.Get("tepPool").Str,
 	}
 }
 
-func (c Client) getPods() (res []Pod, err error) {
+func (c client) getPods() (res []Pod, err error) {
 	pods, err := c.get(Query{uri: "/api/class/fabricSetupP"})
 	if err != nil {
 		return
@@ -369,7 +369,7 @@ func newISISRoute(json JSON) ISISRoute {
 	}
 }
 
-func (c Client) getISISRoutes(pods []Pod) (res []ISISRoute, err error) {
+func (c client) getISISRoutes(pods []Pod) (res []ISISRoute, err error) {
 	var tepQueries []string
 	for _, pod := range pods {
 		queryString := fmt.Sprintf(`eq(isisRoute.pfx,"%s")`, pod.tepPool)
@@ -463,7 +463,7 @@ type MaintUpgJob struct {
 	upgradeStatusStr string
 }
 
-func (c Client) getMaintUpgJob() (res []MaintUpgJob, err error) {
+func (c client) getMaintUpgJob() (res []MaintUpgJob, err error) {
 	json, err := c.get(Query{uri: "/api/class/maintUpgJob"})
 	if err != nil {
 		return res, err
@@ -489,7 +489,7 @@ type FirmwareRunning struct {
 	version string
 }
 
-func (c Client) getFirmwareRunning() (res []FirmwareRunning, err error) {
+func (c client) getFirmwareRunning() (res []FirmwareRunning, err error) {
 	json, err := c.get(Query{uri: "/api/class/firmwareRunning"})
 	if err != nil {
 		return res, err
@@ -505,7 +505,7 @@ func (c Client) getFirmwareRunning() (res []FirmwareRunning, err error) {
 	return res, nil
 }
 
-func (c Client) getFirmwareCtrlrRunning() (res []FirmwareRunning, err error) {
+func (c client) getFirmwareCtrlrRunning() (res []FirmwareRunning, err error) {
 	json, err := c.get(Query{uri: "/api/class/firmwareCtrlrRunning"})
 	if err != nil {
 		return res, err
@@ -521,7 +521,7 @@ func (c Client) getFirmwareCtrlrRunning() (res []FirmwareRunning, err error) {
 	return res, nil
 }
 
-func (c Client) getUpgradeStatuses(devices []Device) (res []Status, err error) {
+func (c client) getUpgradeStatuses(devices []Device) (res []Status, err error) {
 	log.Info("Querying devices for upgrade state. Please wait...")
 	maintUpgJobs, err := c.getMaintUpgJob()
 	if err != nil {
@@ -729,7 +729,7 @@ func (f Fabric) MarshalJSON() ([]byte, error) {
 	})
 }
 
-func (c Client) getFabric() Fabric {
+func (c client) getFabric() Fabric {
 	var faults []Fault
 	var devices []Device
 	var pods []Pod
@@ -737,15 +737,23 @@ func (c Client) getFabric() Fabric {
 	for ok := false; !ok; {
 		// Don't write file until data has been fetched successfully
 		var err error
-		faults, err = c.getFaults()
-		devices, err = c.getDevices()
-		pods, err = c.getPods()
-		isisRoutes, err = c.getISISRoutes(pods)
-		if err != nil {
+		if faults, err = c.getFaults(); err != nil {
 			log.Error(err)
-		} else {
-			ok = true
+			continue
 		}
+		if devices, err = c.getDevices(); err != nil {
+			log.Error(err)
+			continue
+		}
+		if pods, err = c.getPods(); err != nil {
+			log.Error(err)
+			continue
+		}
+		if isisRoutes, err = c.getISISRoutes(pods); err != nil {
+			log.Error(err)
+			continue
+		}
+		ok = true
 	}
 	return Fabric{
 		faults:     faults,
@@ -756,7 +764,7 @@ func (c Client) getFabric() Fabric {
 	}
 }
 
-func (c Client) createNewSnapshot(fn string, fabric Fabric) Fabric {
+func (c client) createNewSnapshot(fn string, fabric Fabric) Fabric {
 	prettyData, _ := json.MarshalIndent(fabric, "", "  ")
 	if err := ioutil.WriteFile(fn, prettyData, 0644); err != nil {
 		log.Panic(err)
@@ -764,7 +772,7 @@ func (c Client) createNewSnapshot(fn string, fabric Fabric) Fabric {
 	return fabric
 }
 
-func (c Client) readSnapshot() (fabric Fabric) {
+func (c client) readSnapshot() (fabric Fabric) {
 	fn := options.Snapshot
 	if _, err := os.Stat(fn); err == nil {
 		log.Info(fmt.Sprintf(`Loading snapshot "%s"...`, fn))
@@ -861,7 +869,7 @@ func getOptions() Options {
 // Main execution flow
 ////////////////////////////////////////////////////////////
 
-func (c Client) requestLoop(fabric Fabric) error {
+func (c client) requestLoop(fabric Fabric) error {
 	lastRefresh := time.Now()
 	for {
 		if time.Since(lastRefresh) >= (8 * time.Minute) {
@@ -892,7 +900,7 @@ func (c Client) requestLoop(fabric Fabric) error {
 	}
 }
 
-func (c Client) loginLoop() (ok bool) {
+func (c client) loginLoop() (ok bool) {
 	for err := c.login(); err != nil; err = c.login() {
 		log.Error(err)
 		log.Info("Note, that login failures are expected on device reload.")
