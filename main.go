@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/ioutil"
 	"net/http"
@@ -17,36 +18,36 @@ import (
 	_ "github.com/konsorten/go-windows-terminal-sequences"
 	"github.com/mattn/go-colorable"
 	"github.com/orandin/lumberjackrus"
-	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 	"github.com/tidwall/gjson"
 	"golang.org/x/crypto/ssh/terminal"
 )
 
-// Version : application version
-const Version = "0.2.0"
+const version = "0.2.0"
 
-// Rev : build revision
-var Rev string
-var options Options
+var options configObject
 var log *logrus.Logger
-var client Client
+var client *api
 
-// JSON : gjson.Result alias
-type JSON = gjson.Result
-
-// Client : httpClient wrapper
-type Client struct {
+type api struct {
 	httpClient *http.Client
 }
 
-// Query : http query
-type Query struct {
+type apiReq struct {
 	uri   string
 	query []string
 }
 
-func newClient(options *Options, log *logrus.Logger) Client {
+type apiRes = gjson.Result
+
+func input(prompt string) string {
+	reader := bufio.NewReader(os.Stdin)
+	fmt.Printf("%s ", prompt)
+	input, _ := reader.ReadString('\n')
+	return strings.Trim(input, "\r\n")
+}
+
+func newClient(options configObject) *api {
 	http.DefaultTransport.(*http.Transport).TLSClientConfig = &tls.Config{
 		InsecureSkipVerify: true,
 	}
@@ -55,54 +56,57 @@ func newClient(options *Options, log *logrus.Logger) Client {
 		log.Panic(err)
 	}
 	httpClient := http.Client{
-		Timeout: time.Second * 30,
+		Timeout: time.Second * time.Duration(options.RequestTimeout),
 		Jar:     cookieJar,
 	}
-	return Client{
+	return &api{
 		httpClient: &httpClient,
 	}
 }
 
-func (c Client) newURL(q Query) string {
-	res := fmt.Sprintf("https://%s%s.json", options.IP, q.uri)
-	if len(q.query) > 0 {
-		return fmt.Sprintf("%s?%s", res, strings.Join(q.query, "&"))
+func newURL(req apiReq) string {
+	result := fmt.Sprintf("https://%s%s.json", options.IP, req.uri)
+	if len(req.query) > 0 {
+		return fmt.Sprintf("%s?%s", result, strings.Join(req.query, "&"))
 	}
-	return res
+	return result
 }
 
-func (c Client) get(query Query) (JSON, error) {
-	url := c.newURL(query)
-	log.Debug(fmt.Sprintf("GET request to %s", query.uri))
-	res, err := c.httpClient.Get(url)
-	if err != nil {
-		return JSON{}, err
-	}
-	defer res.Body.Close()
-	if res.StatusCode != http.StatusOK {
-		return JSON{}, errors.New(fmt.Sprintf(
-			"HTTP response: %s.", res.Status))
-	}
-	body, err := ioutil.ReadAll(res.Body)
-	if err != nil {
-		return JSON{}, err
-	}
-	return gjson.GetBytes(body, "imdata"), nil
+func (api *api) getURI(uri string) (apiRes, error) {
+	return api.get(apiReq{uri: uri})
 }
 
-func (c Client) login() error {
+func (api *api) get(req apiReq) (apiRes, error) {
+	url := newURL(req)
+	log.Debug(fmt.Sprintf("GET request to %s", req.uri))
+	httpRes, err := api.httpClient.Get(url)
+	if err != nil {
+		return apiRes{}, err
+	}
+	defer httpRes.Body.Close()
+	if httpRes.StatusCode != http.StatusOK {
+		return apiRes{}, fmt.Errorf("HTTP response: %s", httpRes.Status)
+	}
+	body, err := ioutil.ReadAll(httpRes.Body)
+	if err != nil {
+		return apiRes{}, err
+	}
+	return apiRes(gjson.GetBytes(body, "imdata")), nil
+}
+
+func (api *api) login() error {
 	uri := "/api/aaaLogin"
-	url := c.newURL(Query{uri: uri})
+	url := newURL(apiReq{uri: uri})
 	data := fmt.Sprintf(`{"aaaUser":{"attributes":{"name":"%s","pwd":"%s"}}}`,
 		options.Username, options.Password)
 	log.Debug(fmt.Sprintf("GET request to %s", uri))
-	res, err := c.httpClient.Post(url, "json", strings.NewReader(data))
+	res, err := api.httpClient.Post(url, "json", strings.NewReader(data))
 	if err != nil {
 		return err
 	}
 	defer res.Body.Close()
 	if res.StatusCode != http.StatusOK {
-		return errors.New(fmt.Sprintf("HTTP response: %s.", res.Status))
+		return fmt.Errorf("HTTP response: %s", res.Status)
 	}
 	body, err := ioutil.ReadAll(res.Body)
 	if err != nil {
@@ -110,18 +114,18 @@ func (c Client) login() error {
 	}
 	errText := gjson.GetBytes(body, "imdata|0|error|attributes|text").Str
 	if errText != "" {
-		return errors.New("Authentication error")
+		return errors.New("authentication error")
 	}
 	log.Info("Authentication successful.")
 	return nil
 }
 
-func (c Client) refresh() error {
-	_, err := c.get(Query{uri: "/api/aaaRefresh"})
+func (api *api) refresh() error {
+	_, err := api.getURI("/api/aaaRefresh")
 	return err
 }
 
-func newLogger(options *Options) *logrus.Logger {
+func newLogger(options *configObject) *logrus.Logger {
 	logrus.SetFormatter(&logrus.TextFormatter{ForceColors: true})
 	logrus.SetOutput(colorable.NewColorableStdout())
 	logger := logrus.New()
@@ -149,9 +153,8 @@ func newLogger(options *Options) *logrus.Logger {
 	return logger
 }
 
-// Device : fabric device
-type Device struct {
-	json    JSON
+type deviceObject struct {
+	json    apiRes
 	address string
 	dn      string
 	name    string
@@ -159,8 +162,8 @@ type Device struct {
 	role    string
 }
 
-func newDevice(json JSON) (device Device, ok bool) {
-	device = Device{
+func newDevice(json apiRes) (device deviceObject, ok bool) {
+	device = deviceObject{
 		json:    json,
 		address: json.Get("address").Str,
 		dn:      json.Get("dn").Str,
@@ -191,12 +194,12 @@ func newDevice(json JSON) (device Device, ok bool) {
 }
 
 // MarshalJSON : marshal device
-func (d Device) MarshalJSON() ([]byte, error) {
+func (d deviceObject) MarshalJSON() ([]byte, error) {
 	return []byte(d.json.Raw), nil
 }
 
-func (c Client) getDevices() (res []Device, err error) {
-	devices, err := c.get(Query{uri: "/api/class/topSystem"})
+func getDevices() (res []deviceObject, err error) {
+	devices, err := client.get(apiReq{uri: "/api/class/topSystem"})
 	if err != nil {
 		return
 	}
@@ -208,17 +211,16 @@ func (c Client) getDevices() (res []Device, err error) {
 	return
 }
 
-// Fault : ACI fault
-type Fault struct {
-	json     JSON
+type faultObject struct {
+	json     apiRes
 	code     string
 	descr    string
 	dn       string
 	severity string
 }
 
-func newFault(json JSON) Fault {
-	return Fault{
+func newFault(json apiRes) faultObject {
+	return faultObject{
 		json:     json,
 		code:     json.Get("code").Str,
 		descr:    json.Get("descr").Str,
@@ -227,37 +229,36 @@ func newFault(json JSON) Fault {
 	}
 }
 
-// MarshalJSON : marshal fault
-func (f Fault) MarshalJSON() ([]byte, error) {
+// MarshalJSON : marshal faultObject
+func (f faultObject) MarshalJSON() ([]byte, error) {
 	return []byte(f.json.Raw), nil
 }
 
-func (c Client) getFaults() (res []Fault, err error) {
-	faults, err := c.get(Query{uri: "/api/class/faultInfo"})
+func getFaults() (res []faultObject, err error) {
+	faults, err := client.get(apiReq{uri: "/api/class/faultInfo"})
 	if err != nil {
 		return
 	}
-	for _, fault := range faults.Get("#.faultInst.attributes").Array() {
-		res = append(res, newFault(fault))
+	for _, faultObject := range faults.Get("#.faultInst.attributes").Array() {
+		res = append(res, newFault(faultObject))
 	}
 	return
 }
 
-// FaultsByCode : faults sorted by fault code
-type FaultsByCode = map[string][]Fault
+type faultsByCode = map[string][]faultObject
 
-func appendFaultByCode(byCode FaultsByCode, fault Fault) FaultsByCode {
-	if faults, ok := byCode[fault.code]; ok {
-		byCode[fault.code] = append(faults, fault)
+func appendFaultByCode(byCode faultsByCode, f faultObject) faultsByCode {
+	if faults, ok := byCode[f.code]; ok {
+		byCode[f.code] = append(faults, f)
 	} else {
-		byCode[fault.code] = []Fault{fault}
+		byCode[f.code] = []faultObject{f}
 	}
 	return byCode
 }
 
-func verifyFaults(faults []Fault, currentFaults []Fault) {
+func verifyFaults(faults []faultObject, currentFaults []faultObject) {
 
-	var faultsByCode = make(FaultsByCode)
+	var faultsByCode = make(faultsByCode)
 	var newFaultCount int
 	for _, currentFault := range currentFaults {
 		newFault := true
@@ -279,22 +280,22 @@ func verifyFaults(faults []Fault, currentFaults []Fault) {
 		}
 		for _, faults := range faultsByCode {
 			if options.Verbose {
-				for i, fault := range faults {
+				for i, faultObject := range faults {
 					log.WithFields(logrus.Fields{
-						"code":        fault.code,
-						"severity":    fault.severity,
-						"description": fault.descr,
+						"code":        faultObject.code,
+						"severity":    faultObject.severity,
+						"description": faultObject.descr,
 						"count":       fmt.Sprintf("%d of %d", i, len(faults)),
-					}).Warn("new fault")
+					}).Warn("new fault(s)")
 				}
 			} else {
-				fault := faults[0]
+				faultObject := faults[0]
 				log.WithFields(logrus.Fields{
-					"code":        fault.code,
-					"severity":    fault.severity,
-					"description": fault.descr,
+					"code":        faultObject.code,
+					"severity":    faultObject.severity,
+					"description": faultObject.descr,
 					"count":       len(faults),
-				}).Warn(fmt.Sprintf("%d new %s fault(s)", len(faults), fault.code))
+				}).Warn(fmt.Sprintf("%d new %s fault(s)", len(faults), faultObject.code))
 			}
 		}
 	} else {
@@ -302,21 +303,20 @@ func verifyFaults(faults []Fault, currentFaults []Fault) {
 	}
 }
 
-// Pod : ACI pod
-type Pod struct {
-	json    JSON
+type podObject struct {
+	json    apiRes
 	dn      string
 	podID   string
 	tepPool string
 }
 
 // MarshalJSON : marshal pod
-func (p Pod) MarshalJSON() ([]byte, error) {
+func (p podObject) MarshalJSON() ([]byte, error) {
 	return []byte(p.json.Raw), nil
 }
 
-func newPod(json JSON) Pod {
-	return Pod{
+func newPod(json apiRes) podObject {
+	return podObject{
 		json:    json,
 		dn:      json.Get("dn").Str,
 		podID:   json.Get("podId").Str,
@@ -324,8 +324,8 @@ func newPod(json JSON) Pod {
 	}
 }
 
-func (c Client) getPods() (res []Pod, err error) {
-	pods, err := c.get(Query{uri: "/api/class/fabricSetupP"})
+func getPods() (res []podObject, err error) {
+	pods, err := client.getURI("/api/class/fabricSetupP")
 	if err != nil {
 		return
 	}
@@ -342,31 +342,30 @@ func (c Client) getPods() (res []Pod, err error) {
 	return
 }
 
-// ISISRoute : infrastructure ISIS route
-type ISISRoute struct {
-	json JSON
+type isisRouteObject struct {
+	json apiRes
 	dn   string
 }
 
 // MarshalJSON : marshal isisRoute
-func (r ISISRoute) MarshalJSON() ([]byte, error) {
+func (r isisRouteObject) MarshalJSON() ([]byte, error) {
 	return []byte(r.json.Raw), nil
 }
 
-func newISISRoute(json JSON) ISISRoute {
-	return ISISRoute{
+func newISISRoute(json apiRes) isisRouteObject {
+	return isisRouteObject{
 		json: json,
 		dn:   json.Get("dn").Str,
 	}
 }
 
-func (c Client) getISISRoutes(pods []Pod) (res []ISISRoute, err error) {
+func getISISRoutes(pods []podObject) (res []isisRouteObject, err error) {
 	var tepQueries []string
 	for _, pod := range pods {
 		queryString := fmt.Sprintf(`eq(isisRoute.pfx,"%s")`, pod.tepPool)
 		tepQueries = append(tepQueries, queryString)
 	}
-	routes, err := c.get(Query{
+	routes, err := client.get(apiReq{
 		uri: "/api/node/class/isisRoute",
 		query: []string{
 			"rsp-subtree-include=relations",
@@ -382,7 +381,7 @@ func (c Client) getISISRoutes(pods []Pod) (res []ISISRoute, err error) {
 	return
 }
 
-func verifyInterpodRoutes(fabric Fabric, currentRoutes []ISISRoute) {
+func verifyInterpodRoutes(fabric fabricObject, currentRoutes []isisRouteObject) {
 	var convergingCount int
 	for _, device := range fabric.devices {
 		if device.role != "leaf" {
@@ -428,11 +427,10 @@ func verifyInterpodRoutes(fabric Fabric, currentRoutes []ISISRoute) {
 	}
 }
 
-// Status : aggregate upgrade status
-type Status struct {
-	device  Device
-	job     MaintUpgJob
-	running FirmwareRunning
+type status struct {
+	device  deviceObject
+	job     maintUpgJob
+	running firmwareRunning
 }
 
 const (
@@ -440,9 +438,8 @@ const (
 	upgrading
 )
 
-// MaintUpgJob : upgrade job status
-type MaintUpgJob struct {
-	json             JSON
+type maintUpgJob struct {
+	json             apiRes
 	dn               string
 	desiredVersion   string
 	fwGrp            string
@@ -452,13 +449,13 @@ type MaintUpgJob struct {
 	upgradeStatusStr string
 }
 
-func (c Client) getMaintUpgJob() (res []MaintUpgJob, err error) {
-	json, err := c.get(Query{uri: "/api/class/maintUpgJob"})
+func getMaintUpgJob() (res []maintUpgJob, err error) {
+	json, err := client.getURI("/api/class/maintUpgJob")
 	if err != nil {
 		return res, err
 	}
 	for _, record := range json.Get("#.maintUpgJob.attributes").Array() {
-		res = append(res, MaintUpgJob{
+		res = append(res, maintUpgJob{
 			json:             record,
 			dn:               record.Get("dn").Str,
 			desiredVersion:   record.Get("desiredVersion").Str,
@@ -472,21 +469,20 @@ func (c Client) getMaintUpgJob() (res []MaintUpgJob, err error) {
 	return res, nil
 }
 
-// FirmwareRunning : currently running firmware
-type FirmwareRunning struct {
-	json    JSON
+type firmwareRunning struct {
+	json    apiRes
 	dn      string
 	version string
 }
 
-func (c Client) getFirmwareRunning() (res []FirmwareRunning, err error) {
-	json, err := c.get(Query{uri: "/api/class/firmwareRunning"})
+func getFirmwareRunning() (res []firmwareRunning, err error) {
+	json, err := client.getURI("/api/class/firmwareRunning")
 	if err != nil {
 		return res, err
 	}
 	records := json.Get("#.firmwareRunning.attributes").Array()
 	for _, record := range records {
-		res = append(res, FirmwareRunning{
+		res = append(res, firmwareRunning{
 			json:    record,
 			dn:      record.Get("dn").Str,
 			version: record.Get("version").Str,
@@ -495,14 +491,14 @@ func (c Client) getFirmwareRunning() (res []FirmwareRunning, err error) {
 	return res, nil
 }
 
-func (c Client) getFirmwareCtrlrRunning() (res []FirmwareRunning, err error) {
-	json, err := c.get(Query{uri: "/api/class/firmwareCtrlrRunning"})
+func getFirmwareCtrlrRunning() (res []firmwareRunning, err error) {
+	json, err := client.getURI("/api/class/firmwareCtrlrRunning")
 	if err != nil {
 		return res, err
 	}
 	records := json.Get("#.firmwareCtrlrRunning.attributes").Array()
 	for _, record := range records {
-		res = append(res, FirmwareRunning{
+		res = append(res, firmwareRunning{
 			json:    record,
 			dn:      record.Get("dn").Str,
 			version: record.Get("version").Str,
@@ -511,24 +507,24 @@ func (c Client) getFirmwareCtrlrRunning() (res []FirmwareRunning, err error) {
 	return res, nil
 }
 
-func (c Client) getUpgradeStatuses(devices []Device) (res []Status, err error) {
+func getUpgradeStatuses(devices []deviceObject) (res []status, err error) {
 	log.Info("Querying devices for upgrade state. Please wait...")
-	maintUpgJobs, err := c.getMaintUpgJob()
+	maintUpgJobs, err := getMaintUpgJob()
 	if err != nil {
 		return res, err
 	}
-	firmwareRunnings, err := c.getFirmwareRunning()
+	firmwareRunnings, err := getFirmwareRunning()
 	if err != nil {
 		return res, err
 	}
-	firmwareCtrlrRunnings, err := c.getFirmwareCtrlrRunning()
+	firmwareCtrlrRunnings, err := getFirmwareCtrlrRunning()
 	if err != nil {
 		return res, err
 	}
 	for _, device := range devices {
-		var firmwareRunningArray []FirmwareRunning
+		var firmwareRunningArray []firmwareRunning
 		var firmwareRunningDN, maintUpgJobDN string
-		status := Status{device: device}
+		status := status{device: device}
 		switch device.role {
 		case "controller":
 			firmwareRunningDN = device.dn + "/ctrlfwstatuscont/ctrlrrunning"
@@ -556,14 +552,14 @@ func (c Client) getUpgradeStatuses(devices []Device) (res []Status, err error) {
 	return
 }
 
-func verifyUpgradeState(statuses []Status) int {
+func verifyUpgradeState(statuses []status) int {
 	sorted := struct {
-		scheduled   []Status
-		queued      []Status
-		upgrading   []Status
-		ok          []Status
-		failed      []Status
-		unavailable []Status
+		scheduled   []status
+		queued      []status
+		upgrading   []status
+		ok          []status
+		failed      []status
+		unavailable []status
 	}{}
 	for _, status := range statuses {
 		switch status.job.upgradeStatus {
@@ -584,7 +580,7 @@ func verifyUpgradeState(statuses []Status) int {
 	if len(sorted.scheduled) > 0 {
 		log.Info(fmt.Sprintf("%d device(s) scheduled for upgrade.",
 			len(sorted.scheduled)))
-		log.Info("Note that these will not start upgrading without a trigger.")
+		log.Info("Note that these will not start upgrading without opts trigger.")
 		log.Info("verbose option will show details of scheduled devices.")
 		for _, status := range sorted.scheduled {
 			log.WithFields(logrus.Fields{
@@ -616,7 +612,7 @@ func verifyUpgradeState(statuses []Status) int {
 	}
 
 	if len(sorted.unavailable) > 0 {
-		log.Warn(fmt.Sprintf("%d device(s) are not providing a status.",
+		log.Warn(fmt.Sprintf("%d device(s) are not providing opts status.",
 			len(sorted.unavailable)))
 		log.Info("Devices may be rebooting due to upgrade activity.")
 		for _, status := range sorted.unavailable {
@@ -667,21 +663,20 @@ func verifyUpgradeState(statuses []Status) int {
 	return upgrading
 }
 
-// Fabric : snapshot representing fabric
-type Fabric struct {
-	json       JSON
-	faults     []Fault
-	devices    []Device
-	pods       []Pod
-	isisRoutes []ISISRoute
+type fabricObject struct {
+	json       apiRes
+	faults     []faultObject
+	devices    []deviceObject
+	pods       []podObject
+	isisRoutes []isisRouteObject
 	timestamp  time.Time
 }
 
-func newFabric(json JSON) Fabric {
-	var faults []Fault
-	var devices []Device
-	var pods []Pod
-	var isisRoutes []ISISRoute
+func newFabric(json apiRes) fabricObject {
+	var faults []faultObject
+	var devices []deviceObject
+	var pods []podObject
+	var isisRoutes []isisRouteObject
 	for _, record := range json.Get("faults").Array() {
 		faults = append(faults, newFault(record))
 	}
@@ -696,7 +691,7 @@ func newFabric(json JSON) Fabric {
 	for _, record := range json.Get("isisRoutes").Array() {
 		isisRoutes = append(isisRoutes, newISISRoute(record))
 	}
-	return Fabric{
+	return fabricObject{
 		json:       json,
 		faults:     faults,
 		devices:    devices,
@@ -707,7 +702,7 @@ func newFabric(json JSON) Fabric {
 }
 
 // MarshalJSON : marshal fabric
-func (f Fabric) MarshalJSON() ([]byte, error) {
+func (f fabricObject) MarshalJSON() ([]byte, error) {
 	return json.Marshal(map[string]interface{}{
 		"faults":     f.faults,
 		"devices":    f.devices,
@@ -717,33 +712,33 @@ func (f Fabric) MarshalJSON() ([]byte, error) {
 	})
 }
 
-func (c Client) getFabric() Fabric {
-	var faults []Fault
-	var devices []Device
-	var pods []Pod
-	var isisRoutes []ISISRoute
+func getFabric() fabricObject {
+	var faults []faultObject
+	var devices []deviceObject
+	var pods []podObject
+	var isisRoutes []isisRouteObject
 	for ok := false; !ok; {
 		// Don't write file until data has been fetched successfully
 		var err error
-		if faults, err = c.getFaults(); err != nil {
+		if faults, err = getFaults(); err != nil {
 			log.Error(err)
 			continue
 		}
-		if devices, err = c.getDevices(); err != nil {
+		if devices, err = getDevices(); err != nil {
 			log.Error(err)
 			continue
 		}
-		if pods, err = c.getPods(); err != nil {
+		if pods, err = getPods(); err != nil {
 			log.Error(err)
 			continue
 		}
-		if isisRoutes, err = c.getISISRoutes(pods); err != nil {
+		if isisRoutes, err = getISISRoutes(pods); err != nil {
 			log.Error(err)
 			continue
 		}
 		ok = true
 	}
-	return Fabric{
+	return fabricObject{
 		faults:     faults,
 		devices:    devices,
 		pods:       pods,
@@ -752,7 +747,7 @@ func (c Client) getFabric() Fabric {
 	}
 }
 
-func createNewSnapshot(fn string, fabric Fabric) Fabric {
+func createNewSnapshot(fn string, fabric fabricObject) fabricObject {
 	prettyData, _ := json.MarshalIndent(fabric, "", "  ")
 	if err := ioutil.WriteFile(fn, prettyData, 0644); err != nil {
 		log.Panic(err)
@@ -760,7 +755,7 @@ func createNewSnapshot(fn string, fabric Fabric) Fabric {
 	return fabric
 }
 
-func readSnapshot() (fabric Fabric) {
+func readSnapshot() (fabric fabricObject) {
 	fn := options.Snapshot
 	if _, err := os.Stat(fn); err == nil {
 		log.Info(fmt.Sprintf(`Loading snapshot "%s"...`, fn))
@@ -770,11 +765,11 @@ func readSnapshot() (fabric Fabric) {
 		}
 		json := gjson.ParseBytes(data)
 		fabric = newFabric(json)
-		var currentFabric Fabric
+		var currentFabric fabricObject
 		var fetched bool
-		getFabricsOnce := func() Fabric {
+		getFabricsOnce := func() fabricObject {
 			if !fetched {
-				currentFabric = client.getFabric()
+				currentFabric = getFabric()
 				fetched = true
 			}
 			return currentFabric
@@ -800,44 +795,35 @@ func readSnapshot() (fabric Fabric) {
 		}
 	} else {
 		log.Info(fmt.Sprintf("Creating new snapshot %s...", fn))
-		fabric = createNewSnapshot(fn, client.getFabric())
+		fabric = createNewSnapshot(fn, getFabric())
 	}
 	return
 }
 
-// Options : Configuration options / CLI args
-type Options struct {
-	IP                 string `arg:"-i" help:"fabric IP address"`
-	Password           string `arg:"-p"`
+type configObject struct {
+	IP                 string `arg:"-i" help:"APIC IP address"`
+	Username           string `arg:"-u" help:"username"`
+	Password           string `arg:"-p" help:"password"`
 	Snapshot           string `arg:"-s" help:"Snapshot file"`
-	Username           string `arg:"-u"`
 	Verbose            bool   `arg:"-v"`
-	RequestTimeout     int    `arg:"--requestTimeout"`
-	LoginRetryInterval int    `arg:"--loginRetryInterval"`
+	RequestTimeout     int    `arg:"--request-timeout" help:"HTTP request timeout"`
+	LoginRetryInterval int    `arg:"--login-retry-interval" help:"Login retry interval"`
 }
 
-// Description : app description for CLI args
-func (Options) Description() string {
-	return "Monitor ACI health status."
+func (configObject) Description() string {
+	return "Monitor ACI health status"
 }
 
-// Version : app version for CLI args
-func (Options) Version() string {
-	if Rev == "" {
-		return fmt.Sprintf("Version %s local build", Version)
+func (configObject) Version() string {
+	return fmt.Sprintf("ACI monitor version %s", version)
+}
+
+func getOptions() configObject {
+	args := configObject{
+		Snapshot:           "snapshot.json",
+		RequestTimeout:     30,
+		LoginRetryInterval: 60,
 	}
-	return fmt.Sprintf("Version %s Revision %s", Version, Rev)
-}
-
-func input(prompt string) string {
-	reader := bufio.NewReader(os.Stdin)
-	fmt.Printf("%s ", prompt)
-	input, _ := reader.ReadString('\n')
-	return strings.Trim(input, "\r\n")
-}
-
-func getOptions() Options {
-	args := Options{Snapshot: "snapshot.json"}
 	arg.MustParse(&args)
 	if args.IP == "" {
 		args.IP = input("APIC IP:")
@@ -853,7 +839,7 @@ func getOptions() Options {
 	return args
 }
 
-func requestLoop(fabric Fabric) error {
+func requestLoop(fabric fabricObject) error {
 	lastRefresh := time.Now()
 	for {
 		if time.Since(lastRefresh) >= (8 * time.Minute) {
@@ -861,18 +847,18 @@ func requestLoop(fabric Fabric) error {
 				return err
 			}
 		}
-		statuses, err := client.getUpgradeStatuses(fabric.devices)
+		statuses, err := getUpgradeStatuses(fabric.devices)
 		if err != nil {
 			return err
 		}
 		if verifyUpgradeState(statuses) == stable {
-			currentFaults, err := client.getFaults()
+			currentFaults, err := getFaults()
 			if err != nil {
 				return err
 			}
 			verifyFaults(fabric.faults, currentFaults)
 			if len(fabric.pods) > 1 {
-				isisRoutes, err := client.getISISRoutes(fabric.pods)
+				isisRoutes, err := getISISRoutes(fabric.pods)
 				if err != nil {
 					return err
 				}
@@ -898,7 +884,7 @@ func loginLoop() (ok bool) {
 func init() {
 	options = getOptions()
 	log = newLogger(&options)
-	client = newClient(&options, log)
+	client = newClient(options)
 }
 
 func main() {
