@@ -805,13 +805,15 @@ func readSnapshot() (fabric Fabric) {
 	return
 }
 
-// Options : CLI options
+// Options : Configuration options / CLI args
 type Options struct {
-	IP       string `arg:"-i" help:"fabric IP address"` // IP : APIC IP
-	Password string `arg:"-p"`                          // Password : APIC password
-	Snapshot string `arg:"-s" help:"Snapshot file"`     // Snapshot : snapshot fn
-	Username string `arg:"-u"`                          // Username : APIC username
-	Verbose  bool   `arg:"-v"`                          // Verbose : verbose flag
+	IP                 string `arg:"-i" help:"fabric IP address"`
+	Password           string `arg:"-p"`
+	Snapshot           string `arg:"-s" help:"Snapshot file"`
+	Username           string `arg:"-u"`
+	Verbose            bool   `arg:"-v"`
+	RequestTimeout     int    `arg:"--requestTimeout"`
+	LoginRetryInterval int    `arg:"--loginRetryInterval"`
 }
 
 // Description : app description for CLI args
