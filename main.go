@@ -27,9 +27,9 @@ const version = "0.2.0"
 
 var options configObject
 var log *logrus.Logger
-var client *api
+var client *apiClient
 
-type api struct {
+type apiClient struct {
 	httpClient *http.Client
 }
 
@@ -47,7 +47,7 @@ func input(prompt string) string {
 	return strings.Trim(input, "\r\n")
 }
 
-func newClient(options configObject) *api {
+func newClient(options configObject) *apiClient {
 	http.DefaultTransport.(*http.Transport).TLSClientConfig = &tls.Config{
 		InsecureSkipVerify: true,
 	}
@@ -59,7 +59,7 @@ func newClient(options configObject) *api {
 		Timeout: time.Second * time.Duration(options.RequestTimeout),
 		Jar:     cookieJar,
 	}
-	return &api{
+	return &apiClient{
 		httpClient: &httpClient,
 	}
 }
@@ -72,11 +72,11 @@ func newURL(req apiReq) string {
 	return result
 }
 
-func (api *api) getURI(uri string) (apiRes, error) {
+func (api *apiClient) getURI(uri string) (apiRes, error) {
 	return api.get(apiReq{uri: uri})
 }
 
-func (api *api) get(req apiReq) (apiRes, error) {
+func (api *apiClient) get(req apiReq) (apiRes, error) {
 	url := newURL(req)
 	log.Debug(fmt.Sprintf("GET request to %s", req.uri))
 	httpRes, err := api.httpClient.Get(url)
@@ -94,7 +94,7 @@ func (api *api) get(req apiReq) (apiRes, error) {
 	return apiRes(gjson.GetBytes(body, "imdata")), nil
 }
 
-func (api *api) login() error {
+func (api *apiClient) login() error {
 	uri := "/api/aaaLogin"
 	url := newURL(apiReq{uri: uri})
 	data := fmt.Sprintf(`{"aaaUser":{"attributes":{"name":"%s","pwd":"%s"}}}`,
@@ -120,7 +120,7 @@ func (api *api) login() error {
 	return nil
 }
 
-func (api *api) refresh() error {
+func (api *apiClient) refresh() error {
 	_, err := api.getURI("/api/aaaRefresh")
 	return err
 }
