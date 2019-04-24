@@ -876,7 +876,7 @@ func loginLoop() (ok bool) {
 		log.Info("Note, that login failures are expected on device reload.")
 		log.Info("If this is the initial login, hit Ctrl-C and verify login details.")
 		log.Info("Waiting 60 seconds before trying again...")
-		time.Sleep(60 * time.Second)
+		time.Sleep(time.Duration(options.LoginRetryInterval) * time.Second)
 	}
 	return true
 }
