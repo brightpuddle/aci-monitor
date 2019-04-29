@@ -24,7 +24,7 @@ import (
 	"golang.org/x/crypto/ssh/terminal"
 )
 
-const version = "0.3.1"
+const version = "0.3.2"
 
 var log *logrus.Logger
 var client *apiClient
