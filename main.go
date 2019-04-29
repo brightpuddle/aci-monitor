@@ -25,12 +25,12 @@ import (
 
 const version = "0.2.0"
 
-var options configObject
 var log *logrus.Logger
 var client *apiClient
 
 type apiClient struct {
 	httpClient *http.Client
+	cfg        *Config
 }
 
 type apiReq struct {
@@ -47,7 +47,7 @@ func input(prompt string) string {
 	return strings.Trim(input, "\r\n")
 }
 
-func newClient(options configObject) *apiClient {
+func newClient(cfg *Config) *apiClient {
 	http.DefaultTransport.(*http.Transport).TLSClientConfig = &tls.Config{
 		InsecureSkipVerify: true,
 	}
@@ -56,16 +56,17 @@ func newClient(options configObject) *apiClient {
 		log.Panic(err)
 	}
 	httpClient := http.Client{
-		Timeout: time.Second * time.Duration(options.RequestTimeout),
+		Timeout: time.Second * time.Duration(cfg.RequestTimeout),
 		Jar:     cookieJar,
 	}
 	return &apiClient{
 		httpClient: &httpClient,
+		cfg:        cfg,
 	}
 }
 
 func newURL(req apiReq) string {
-	result := fmt.Sprintf("https://%s%s.json", options.IP, req.uri)
+	result := fmt.Sprintf("https://%s%s.json", client.cfg.IP, req.uri)
 	if len(req.query) > 0 {
 		return fmt.Sprintf("%s?%s", result, strings.Join(req.query, "&"))
 	}
@@ -98,7 +99,7 @@ func (api *apiClient) login() error {
 	uri := "/api/aaaLogin"
 	url := newURL(apiReq{uri: uri})
 	data := fmt.Sprintf(`{"aaaUser":{"attributes":{"name":"%s","pwd":"%s"}}}`,
-		options.Username, options.Password)
+		api.cfg.Username, api.cfg.Password)
 	log.Debug(fmt.Sprintf("GET request to %s", uri))
 	res, err := api.httpClient.Post(url, "json", strings.NewReader(data))
 	if err != nil {
@@ -125,11 +126,11 @@ func (api *apiClient) refresh() error {
 	return err
 }
 
-func newLogger(options *configObject) *logrus.Logger {
+func newLogger(cfg *Config) *logrus.Logger {
 	logrus.SetFormatter(&logrus.TextFormatter{ForceColors: true})
 	logrus.SetOutput(colorable.NewColorableStdout())
 	logger := logrus.New()
-	if options.Verbose {
+	if cfg.Verbose {
 		logger.SetLevel(logrus.DebugLevel)
 	}
 	logger.SetFormatter(&logrus.TextFormatter{ForceColors: true})
@@ -275,11 +276,11 @@ func verifyFaults(faults []faultObject, currentFaults []faultObject) {
 	if newFaultCount > 0 {
 		log.Warn(fmt.Sprintf("%d new fault(s) since previous snapshot.",
 			newFaultCount))
-		if !options.Verbose {
+		if !client.cfg.Verbose {
 			log.Info("Use verbose mode to see full fault list.")
 		}
 		for _, faults := range faultsByCode {
-			if options.Verbose {
+			if client.cfg.Verbose {
 				for i, faultObject := range faults {
 					log.WithFields(logrus.Fields{
 						"code":        faultObject.code,
@@ -756,7 +757,7 @@ func createNewSnapshot(fn string, fabric fabricObject) fabricObject {
 }
 
 func readSnapshot() (fabric fabricObject) {
-	fn := options.Snapshot
+	fn := client.cfg.Snapshot
 	if _, err := os.Stat(fn); err == nil {
 		log.Info(fmt.Sprintf(`Loading snapshot "%s"...`, fn))
 		data, err := ioutil.ReadFile(fn)
@@ -800,7 +801,8 @@ func readSnapshot() (fabric fabricObject) {
 	return
 }
 
-type configObject struct {
+// Config : CLI args
+type Config struct {
 	IP                 string `arg:"-i" help:"APIC IP address"`
 	Username           string `arg:"-u" help:"username"`
 	Password           string `arg:"-p" help:"password"`
@@ -810,33 +812,35 @@ type configObject struct {
 	LoginRetryInterval int    `arg:"--login-retry-interval" help:"Login retry interval"`
 }
 
-func (configObject) Description() string {
+// Description : App description for CLI interface
+func (Config) Description() string {
 	return "Monitor ACI health status"
 }
 
-func (configObject) Version() string {
+// Version : App version string for CLI interface
+func (Config) Version() string {
 	return fmt.Sprintf("ACI monitor version %s", version)
 }
 
-func getOptions() configObject {
-	args := configObject{
+func newConfigFromCLI() Config {
+	cfg := Config{
 		Snapshot:           "snapshot.json",
 		RequestTimeout:     30,
 		LoginRetryInterval: 60,
 	}
-	arg.MustParse(&args)
-	if args.IP == "" {
-		args.IP = input("APIC IP:")
+	arg.MustParse(&cfg)
+	if cfg.IP == "" {
+		cfg.IP = input("APIC IP:")
 	}
-	if args.Username == "" {
-		args.Username = input("Username:")
+	if cfg.Username == "" {
+		cfg.Username = input("Username:")
 	}
-	if args.Password == "" {
+	if cfg.Password == "" {
 		fmt.Print("Password: ")
 		pwd, _ := terminal.ReadPassword(int(syscall.Stdin))
-		args.Password = string(pwd)
+		cfg.Password = string(pwd)
 	}
-	return args
+	return cfg
 }
 
 func requestLoop(fabric fabricObject) error {
@@ -876,15 +880,15 @@ func loginLoop() (ok bool) {
 		log.Info("Note, that login failures are expected on device reload.")
 		log.Info("If this is the initial login, hit Ctrl-C and verify login details.")
 		log.Info("Waiting 60 seconds before trying again...")
-		time.Sleep(time.Duration(options.LoginRetryInterval) * time.Second)
+		time.Sleep(time.Duration(client.cfg.LoginRetryInterval) * time.Second)
 	}
 	return true
 }
 
 func init() {
-	options = getOptions()
-	log = newLogger(&options)
-	client = newClient(options)
+	cfg := newConfigFromCLI()
+	log = newLogger(&cfg)
+	client = newClient(&cfg)
 }
 
 func main() {
