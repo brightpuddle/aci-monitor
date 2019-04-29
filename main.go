@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/cookiejar"
 	"os"
+	"sort"
 	"strings"
 	"syscall"
 	"time"
@@ -279,7 +280,14 @@ func verifyFaults(faults []faultObject, currentFaults []faultObject) {
 		if !client.cfg.Verbose {
 			log.Info("Use verbose mode to see full fault list.")
 		}
-		for _, faults := range faultsByCode {
+		// Create faultCodes index for consistent sort order
+		var faultCodes []string
+		for code := range faultsByCode {
+			faultCodes = append(faultCodes, code)
+		}
+		sort.Strings(faultCodes)
+		for _, code := range faultCodes {
+			faults := faultsByCode[code]
 			if client.cfg.Verbose {
 				for i, faultObject := range faults {
 					log.WithFields(logrus.Fields{
