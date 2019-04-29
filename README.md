@@ -1,5 +1,7 @@
 # ACI status monitor tool
 
+[![Build Status](https://travis-ci.org/brightpuddle/aci-monitor.svg?branch=master)](https://travis-ci.org/brightpuddle/aci-monitor)
+
 Precompiled binaries are provided for all major platforms.
 
 https://github.com/brightpuddle/aci-monitor/releases
@@ -34,6 +36,11 @@ Display additional logging info to the terminal, e.g. each HTTP request, etc.
 `-s --snapshot`
 Filename for the snapshot. The default is `snapshot.json`. As the name implies, this file is in JSON, and pretty printed for human-readibility. It contains a list of active devices and faults on the network at the point when created. The recommendation is to create a new snapshot surrounding a change or upgrade to ensure post-change status hasn't introduced any additional faults.
 
+`--request-timeout`
+HTTP request timeout. The default is 30 seconds, which should work for most situations. You may need to increase this for a particularly busy APIC or for a high latency connection, e.g. some international connections.
+
+`--login-retry-interval`
+Default login retry. When the tool loses connection to the APIC it attempts to login again every 60 seconds by default. This setting allows adjusting this interval. This was added to allow reducing the number of login attempts against backend AAA servers. This should not need to be adjusted for most situations.
 
 
 **Note** that the following features were deprecated:
