@@ -375,7 +375,7 @@ func getISISRoutes(pods []podObject) (res []isisRouteObject, err error) {
 		tepQueries = append(tepQueries, queryString)
 	}
 	routes, err := client.get(apiReq{
-		uri: "/api/node/class/isisRoute",
+		uri: "/api/class/isisRoute",
 		query: []string{
 			"rsp-subtree-include=relations",
 			fmt.Sprintf("query-target-filter=or(%s)", strings.Join(tepQueries, ",")),
