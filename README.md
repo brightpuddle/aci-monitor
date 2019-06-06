@@ -1,7 +1,5 @@
 # ACI status monitor tool
 
-[![Build Status](https://travis-ci.org/brightpuddle/aci-monitor.svg?branch=master)](https://travis-ci.org/brightpuddle/aci-monitor)
-
 Precompiled binaries are provided for all major platforms.
 
 https://github.com/brightpuddle/aci-monitor/releases
