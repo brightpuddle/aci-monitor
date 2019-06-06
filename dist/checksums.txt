@@ -1,0 +1,3 @@
+e136b9ece5281b87e131fcab667fcfc304cdf5e00f0f244db742986f98cb2532  aci-monitor_0.3.4_Linux_64-bit.zip
+0f5ceb4f346f09eabba87cba7b0a38012d546ef47806838d07a2938cd001b48a  aci-monitor_0.3.4_Windows_64-bit.zip
+f2c0543452c435eb1dfe296eb8378ec81e066a2d691a49342fc74d5d87693583  aci-monitor_0.3.4_MacOS_64-bit.zip
