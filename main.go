@@ -900,6 +900,14 @@ func init() {
 }
 
 func main() {
+	defer func() {
+		if r := recover(); r != nil {
+			fmt.Println(r)
+		}
+		fmt.Println("Press enter to exit.")
+		var throwaway string
+		fmt.Scanln(&throwaway)
+	}()
 	log.Info("Running: Hit Ctrl-C to stop")
 	loginLoop()
 	fabric := readSnapshot()
