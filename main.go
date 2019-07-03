@@ -21,6 +21,7 @@ import (
 	"github.com/orandin/lumberjackrus"
 	"github.com/sirupsen/logrus"
 	"github.com/tidwall/gjson"
+	"github.com/tidwall/sjson"
 	"golang.org/x/crypto/ssh/terminal"
 )
 
@@ -99,8 +100,10 @@ func (api *apiClient) get(req apiReq) (apiRes, error) {
 func (api *apiClient) login() error {
 	uri := "/api/aaaLogin"
 	url := newURL(apiReq{uri: uri})
-	data := fmt.Sprintf(`{"aaaUser":{"attributes":{"name":"%s","pwd":"%s"}}}`,
-		api.cfg.Username, api.cfg.Password)
+	data, _ := sjson.Set("", "aaaUser.attributes", map[string]string{
+		"name": api.cfg.Username,
+		"pwd":  api.cfg.Password,
+	})
 	log.Debug(fmt.Sprintf("GET request to %s", uri))
 	res, err := api.httpClient.Post(url, "json", strings.NewReader(data))
 	if err != nil {
