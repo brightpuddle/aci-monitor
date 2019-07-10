@@ -1,5 +1,3 @@
-# ACI status monitor tool
-
 <p align="center">
 <img src="logo.png" width="300" height="64" border="0" alt="ACI vetR collector">
 <br/>
