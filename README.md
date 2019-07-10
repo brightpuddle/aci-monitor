@@ -1,7 +1,7 @@
 # ACI status monitor tool
 
 <p align="center">
-<img src="logo.png" width="600" height="128" border="0" alt="ACI vetR collector">
+<img src="logo.png" width="300" height="64" border="0" alt="ACI vetR collector">
 <br/>
 ACI Monior
 <p>
