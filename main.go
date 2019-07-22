@@ -377,6 +377,9 @@ func getISISRoutes(pods []podObject) (res []isisRouteObject, err error) {
 		queryString := fmt.Sprintf(`eq(isisRoute.pfx,"%s")`, pod.tepPool)
 		tepQueries = append(tepQueries, queryString)
 	}
+	if len(tepQueries) == 0 {
+		return
+	}
 	routes, err := client.get(apiReq{
 		uri: "/api/class/isisRoute",
 		query: []string{
