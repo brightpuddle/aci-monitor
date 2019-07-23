@@ -54,7 +54,7 @@ This tool queries the following API objects:
 
 All results are saved in JSON format in the `snapshot.json` file. Nothing is saved or communicated across the network outside of this single file.
 
-The tool is open source and all code is available on GitHub. Binaries are published for convenience, but the tool can be compiled from source if required for security purposes.
+The tool is open source and all code is available on GitHub. Binaries are published for convenience, but the tool can be compiled from source using the Go compiler if required for security purposes.
 
 ## Usage
 Run this tool surrounding a change. Delete any existing snapshot files at the begining of the change, start the tool and run it through to the end of the change. By running the tool this way you'll be able to see when the fabric returns to the original pre-change fault state.
