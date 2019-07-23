@@ -35,9 +35,8 @@ This tool queries the following API objects:
 
 **Pods and inter-pod ISIS routes:**
 
-```/api/class/fabricSetupP
-/api/class/isisNexthop
-```
+`/api/class/fabricSetupP`
+`/api/class/isisNexthop`
 
 **Faults:**
 
@@ -45,10 +44,10 @@ This tool queries the following API objects:
 
 **Current firmware version and upgrade status:**
 
-```/api/class/firmwareRunning
-/api/class/firmwreCtrlrRunning
-/api/class/maintUpgJob
-```
+`/api/class/firmwareRunning`
+`/api/class/firmwreCtrlrRunning`
+`/api/class/maintUpgJob`
+
 All results are saved in JSON format in the `snapshot.json` file. Nothing is saved or communicated across the network outside of this single file.
 
 The tool is open source and all code is available on GitHub. Binaries are published for convenience, but the tool can be compiled from source if required for security purposes.
