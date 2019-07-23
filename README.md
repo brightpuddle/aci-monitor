@@ -30,24 +30,24 @@ State checker is more comprehensive, but doesn't perform ongoing monitoring. The
 This tool queries the following API objects:
 
 **Devices:**
-
-```/api/class/topSystem
+```
+/api/class/topSystem
 ```
 
 **Pods and inter-pod ISIS routes:**
-
-```/api/class/fabricSetupP
+```
+/api/class/fabricSetupP
 /api/class/isisNexthop
 ```
 
 **Faults:**
-
-```/api/class/faultInfo
+```
+/api/class/faultInfo
 ```
 
 **Current firmware version and upgrade status:**
-
-```/api/class/firmwareRunning
+```
+/api/class/firmwareRunning
 /api/class/firmwreCtrlrRunning
 /api/class/maintUpgJob
 ```
