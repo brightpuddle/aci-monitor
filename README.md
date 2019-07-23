@@ -28,13 +28,26 @@ State checker is more comprehensive, but doesn't perform ongoing monitoring. The
 ## Security
 
 This tool queries the following API objects:
+
+**Devices:**
+
+`/api/class/topSystem`
+
+**Pods and inter-pod ISIS routes:**
+
+```/api/class/fabricSetupP
+/api/class/isisNexthop
 ```
-/api/class/topSystem
-/api/class/fabricSetupP
-/api/class/faultInfo
-/api/class/firmwareRunning
-/api/class/firmwreCtrlrRunnin
-/api/class/isisNextHop
+
+**Faults:**
+
+`/api/class/faultInfo`
+
+**Current firmware version and upgrade status:**
+
+```/api/class/firmwareRunning
+/api/class/firmwreCtrlrRunning
+/api/class/maintUpgJob
 ```
 All results are saved in JSON format in the `snapshot.json` file. Nothing is saved or communicated across the network outside of this single file.
 
