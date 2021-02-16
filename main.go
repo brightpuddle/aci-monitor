@@ -739,17 +739,19 @@ func getFabric() fabricObject {
 			log.Error(err)
 			continue
 		}
-		if devices, err = getDevices(); err != nil {
-			log.Error(err)
-			continue
-		}
-		if pods, err = getPods(); err != nil {
-			log.Error(err)
-			continue
-		}
-		if isisRoutes, err = getISISRoutes(pods); err != nil {
-			log.Error(err)
-			continue
+		if !client.cfg.FaultsOnly {
+			if devices, err = getDevices(); err != nil {
+				log.Error(err)
+				continue
+			}
+			if pods, err = getPods(); err != nil {
+				log.Error(err)
+				continue
+			}
+			if isisRoutes, err = getISISRoutes(pods); err != nil {
+				log.Error(err)
+				continue
+			}
 		}
 		ok = true
 	}
@@ -822,6 +824,7 @@ type Config struct {
 	Password           string `arg:"-p" help:"password"`
 	Snapshot           string `arg:"-s" help:"Snapshot file"`
 	Verbose            bool   `arg:"-v"`
+	FaultsOnly         bool   `arg:"--faults-only" help:"Only monitor faults"`
 	RequestTimeout     int    `arg:"--request-timeout" help:"HTTP request timeout"`
 	LoginRetryInterval int    `arg:"--login-retry-interval" help:"Login retry interval"`
 }
@@ -865,22 +868,30 @@ func requestLoop(fabric fabricObject) error {
 				return err
 			}
 		}
-		statuses, err := getUpgradeStatuses(fabric.devices)
-		if err != nil {
-			return err
-		}
-		if verifyUpgradeState(statuses) == stable {
+		if client.cfg.FaultsOnly {
 			currentFaults, err := getFaults()
 			if err != nil {
 				return err
 			}
 			verifyFaults(fabric.faults, currentFaults)
-			if len(fabric.pods) > 1 {
-				isisRoutes, err := getISISRoutes(fabric.pods)
+		} else {
+			statuses, err := getUpgradeStatuses(fabric.devices)
+			if err != nil {
+				return err
+			}
+			if verifyUpgradeState(statuses) == stable {
+				currentFaults, err := getFaults()
 				if err != nil {
 					return err
 				}
-				verifyInterpodRoutes(fabric, isisRoutes)
+				verifyFaults(fabric.faults, currentFaults)
+				if len(fabric.pods) > 1 {
+					isisRoutes, err := getISISRoutes(fabric.pods)
+					if err != nil {
+						return err
+					}
+					verifyInterpodRoutes(fabric, isisRoutes)
+				}
 			}
 		}
 		log.Info("Sleeping for 10 seconds...")
