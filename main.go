@@ -827,6 +827,7 @@ type Config struct {
 	FaultsOnly         bool   `arg:"--faults-only" help:"Only monitor faults"`
 	RequestTimeout     int    `arg:"--request-timeout" help:"HTTP request timeout"`
 	LoginRetryInterval int    `arg:"--login-retry-interval" help:"Login retry interval"`
+	AlwaysCheckFaults  bool   `arg:"--always-check-faults" help:"Continue to check faults during upgrades"`
 }
 
 // Description : App description for CLI interface
@@ -879,7 +880,7 @@ func requestLoop(fabric fabricObject) error {
 			if err != nil {
 				return err
 			}
-			if verifyUpgradeState(statuses) == stable {
+			if verifyUpgradeState(statuses) == stable || client.cfg.AlwaysCheckFaults {
 				currentFaults, err := getFaults()
 				if err != nil {
 					return err
