@@ -1,37 +1,20 @@
-project_name: aci-monitor
+version: 2
 env_files:
-  github_token: ~/.github.com.token
-env:
-  - GO111MODULE=on
-  - CGO_ENABLED=0
+  github_token: ~/.config/git/brightpuddle_pat
 before:
   hooks:
     - rm -rf dist
-    - go mod download
-    - go test
+    - go test ./...
 builds:
-  -
-    goos:
-      - windows
-      - darwin
-      - linux
-    goarch:
-      - amd64
+  - id: aci-monitor
+    binary: aci-monitor
+    targets:
+      - windows_amd64_v1
+      - linux_amd64_v1
+      - darwin_arm64
 archives:
-  -
+  - id: aci-monitor
     format: zip
-    replacements:
-      darwin: MacOS
-      windows: Windows
-      linux: Linux
-      amd64: 64-bit
-checksum:
-  name_template: 'checksums.txt'
-snapshot:
-  name_template: "{{ .Tag }}-next"
-changelog:
-  sort: asc
-  filters:
-    exclude:
-    - '^docs:'
-    - '^test:'
+    files:
+      - README.md
+      - LICENSE
